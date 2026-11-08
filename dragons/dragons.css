@@ -655,3 +655,12 @@ details.others summary { padding: 8px 2px; cursor: pointer; font-size: 13px; fon
 .next-vs-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: var(--display); font-size: 18px; text-transform: uppercase; }
 .next-vs-sub { margin-top: 2px; font-size: 13.5px; }
 .next-vs-more { margin-top: 4px; font-size: 12.5px; color: var(--muted); }
+/* Stats: season totals of the team */
+.ts-panel { margin-bottom: 14px; }
+.ts-grid { padding: 10px; }
+@media (min-width: 700px) { .ts-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.ts-val { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+.ts-val b { font-family: var(--display); font-size: 24px; font-weight: 800; line-height: 1.1; }
+.ts-val small { font-size: 12.5px; color: var(--muted); }
+.ts-rec { display: grid; gap: 2px; font-size: 12.5px; color: var(--muted); }
+.ts-rec b { font-family: var(--display); font-size: 19px; font-weight: 800; color: var(--text); }

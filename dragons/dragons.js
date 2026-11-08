@@ -770,6 +770,25 @@ function standingsView() {
 }
 
 // ---------- Statistiques ----------
+// Season totals of the team shown (Team module): power play, penalty kill, penalties, home and away records
+function seasonTeamStats(t = state.team) {
+    if (!t || t.st_stats_pj == null) return null;
+    const ppo = int(t.st_stats_av), ppg = int(t.st_stats_av_goal), pko = int(t.st_stats_desav), pkga = int(t.st_stats_desav_goal);
+    return { pj: int(t.st_stats_pj), ppo, ppg, pko, pkga, pk: pko - pkga, pim: int(t.st_stats_pun), pens: int(t.st_stats_nb_pun_min) + int(t.st_stats_nb_pun_maj),
+        home: String(t.st_stats_fiche_local || "").replace(/\s+/g, ""), away: String(t.st_stats_fiche_visit || "").replace(/\s+/g, "") };
+}
+const pctText = (a, b) => b ? `${(100 * a / b).toFixed(1).replace(".", ",").replace(/,0$/, "")} %` : "–";
+function teamStats() {
+    const x = seasonTeamStats();
+    if (!x || !x.pj) return "";
+    const tile = (label, value, sub = "") => `<div class="gs-box"><div class="gs-label">${label}</div><div class="ts-val"><b>${value}</b>${sub ? `<small>${sub}</small>` : ""}</div></div>`;
+    return `<div class="panel ts-panel"><div class="panel-title">Équipe · ${x.pj} partie${x.pj > 1 ? "s" : ""}</div><div class="gs-grid ts-grid">
+        ${tile("Avantage num.", `${x.ppg}/${x.ppo}`, pctText(x.ppg, x.ppo))}
+        ${tile("Désavantage num.", `${x.pk}/${x.pko}`, pctText(x.pk, x.pko))}
+        ${tile("Minutes de punition", x.pim, `${x.pens} pun. · ${dec(x.pim / x.pj, 1)} par match`)}
+        <div class="gs-box"><div class="gs-label">Fiche V-D-N</div><div class="ts-rec"><span><b>${esc(x.home || "–")}</b> dom.</span><span><b>${esc(x.away || "–")}</b> vis.</span></div></div>
+    </div></div>`;
+}
 function statsView() {
     const link = ext(`${SITE}/equipes/?seasonNo=${encodeURIComponent(shownSeasonNo())}&teamNo=${encodeURIComponent(state.teamNo)}`, "Site de la ligue");
     const excel = `<div class="stats-actions"><button type="button" class="btn" id="xlsxBtn">⬇ Fichier Excel</button><span class="hint">Équipe, matchs, joueurs et gardiens de la saison affichée</span></div>`;
@@ -800,7 +819,7 @@ function statsView() {
             </tr>`).join("")}</tbody>
         </table></div></div>`;
     }
-    return `<div class="stats-view">${excel}${players}${goalies}
+    return `<div class="stats-view">${excel}${teamStats()}${players}${goalies}
         <div class="view-foot"><span>Statistiques officielles · touchez un joueur pour son historique</span>${link}</div></div>`;
 }
 
@@ -1093,6 +1112,7 @@ async function openSummary(gameNo) {
     const val = (v) => v ?? "–";
     const pk = (t, o) => o.stats?.ppo != null && o.stats?.ppg != null ? { k: o.stats.ppo - o.stats.ppg, n: o.stats.ppo } : null;
     const pkA = pk(A, H), pkH = pk(H, A);
+    const shotsOf = (t) => { const n = parseInt(t.stats?.shots, 10); return Number.isFinite(n) && n > 0 ? n : null; };
     const nPen = (home) => s.pens.filter(x => x.home === home).length;
     const box = (label, a, h, aSub = "", hSub = "") => `<div class="gs-box">
         <div class="gs-label">${label}</div>
@@ -1105,7 +1125,7 @@ async function openSummary(gameNo) {
         ${box("Avantage num.", `${val(A.stats.ppg)}/${val(A.stats.ppo)}`, `${val(H.stats.ppg)}/${val(H.stats.ppo)}`, pct(A.stats.ppg, A.stats.ppo), pct(H.stats.ppg, H.stats.ppo))}
         ${box("Désavantage num.", pkA ? `${pkA.k}/${pkA.n}` : "–", pkH ? `${pkH.k}/${pkH.n}` : "–", pkA ? pct(pkA.k, pkA.n) : "", pkH ? pct(pkH.k, pkH.n) : "")}
         ${box("Minutes de punition", A.stats.pim, H.stats.pim, `${nPen(false)} pun.`, `${nPen(true)} pun.`)}
-        ${s.fj.away != null || s.fj.home != null ? box("Points Franc Jeu", val(s.fj.away), val(s.fj.home)) : ""}
+        ${box("Tirs au but", val(shotsOf(A)), val(shotsOf(H)), shotsOf(A) ? `${pct(A.score, shotsOf(A))} eff.` : "", shotsOf(H) ? `${pct(H.score, shotsOf(H))} eff.` : "")}
     </div>` : "";
 
     // Goals and penalties by period, in game-clock order, with the player's photo
@@ -1274,8 +1294,10 @@ function buildXLSX(sheets) {         // sheets: [{ name, rows }]
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 function downloadXLSX() {
     const row = standRow(state.teamNo), me = state.teamNo;
-    const equipe = [["Équipe", "Division", "Saison", "Rang", "PJ", "V", "D", "DP", "N", "Pts", "BP", "BC", "Diff"],
-        [myTeamName(), currentClass()?.name || "", shownSeason()?.name || "", row?.rank || "", row?.pj ?? "", row?.v ?? "", row ? row.dr + row.df : "", row?.dp ?? "", row?.n ?? "", row?.pts ?? "", row?.bp ?? "", row?.bc ?? "", row?.diff ?? ""]];
+    const ts = seasonTeamStats();
+    const equipe = [["Équipe", "Division", "Saison", "Rang", "PJ", "V", "D", "DP", "N", "Pts", "BP", "BC", "Diff", "BAN", "Occasions AN", "DN réussis", "Occasions DN", "Pun (min)"],
+        [myTeamName(), currentClass()?.name || "", shownSeason()?.name || "", row?.rank || "", row?.pj ?? "", row?.v ?? "", row ? row.dr + row.df : "", row?.dp ?? "", row?.n ?? "", row?.pts ?? "", row?.bp ?? "", row?.bc ?? "", row?.diff ?? "",
+            ts?.ppg ?? "", ts?.ppo ?? "", ts?.pk ?? "", ts?.pko ?? "", ts?.pim ?? ""]];
     const matchs = [["Date", "Heure", "Partie", "Dom./Vis.", "Adversaire", "Pour", "Contre", "Résultat", "Note", "Surface"],
         ...state.games.slice().sort((a, b) => a.start - b.start).map(g => {
             const home = g.home.no === me, r = resultOf(g, me), fin = g.score && isFinal(g);
