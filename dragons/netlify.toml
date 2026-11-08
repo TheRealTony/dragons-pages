@@ -8,3 +8,13 @@
   from = "/dragons2026-2027.html"
   to = "/"
   status = 301
+
+# Page code changes often: always check for a new version
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
