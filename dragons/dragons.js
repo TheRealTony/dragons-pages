@@ -1284,7 +1284,7 @@ function downloadXLSX() {
 }
 
 // ---------- Lineups (5 contre 5: 3 attaquants + 2 défenseurs, plus le gardien) ----------
-const FWD_LINES = 4, DEF_PAIRS = 3;
+const FWD_LINES = 2, DEF_PAIRS = 2;
 const FWD_POS = ["AG", "C", "AD"], DEF_POS = ["DG", "DD"];
 const LINEUP_SLOTS = [
     ...Array.from({ length: FWD_LINES }, (_, i) => FWD_POS.map(p => [`L${i + 1}`, p])).flat(),

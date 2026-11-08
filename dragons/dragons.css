@@ -648,3 +648,5 @@ details.others summary { padding: 8px 2px; cursor: pointer; font-size: 13px; fon
     .bv-row.c3 .bv-no { font-size: 26px; line-height: 1; }
     .bv-row.c3 .bv-name { font-size: 12.5px; }
 }
+/* Wide screens: the three-box forward lines take the full width, defence and goalies side by side below */
+@media (min-width: 900px) { .bv-groups .bv-a { grid-row: auto; grid-column: 1 / -1; } }
