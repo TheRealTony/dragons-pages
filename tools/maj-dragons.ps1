@@ -43,13 +43,14 @@ function Save($module, $query, $year = "", $season = "", $cls = "", $team = "", 
     $raw
 }
 
-$years = @(Save "AvailableYears" "&path=Utilities/" | ConvertFrom-Json)
-$year = $years | Where-Object { $_.default } | Select-Object -First 1
+# ForEach-Object { $_ } unrolls the list: Windows PowerShell 5.1 hands ConvertFrom-Json's array over as one object
+$years = @(Save "AvailableYears" "&path=Utilities/" | ConvertFrom-Json | ForEach-Object { $_ })
+$year = $years | Where-Object { $_.default -eq $true } | Select-Object -First 1
 if (-not $year) { $year = $years[0] }
 $y = [string]$year.sy_no
 
-$seasons = @(Save "AvailableSeason" "&path=Utilities/&params[year]=$y" -year $y | ConvertFrom-Json)
-$season = $seasons | Where-Object { $_.default } | Select-Object -First 1
+$seasons = @(Save "AvailableSeason" "&path=Utilities/&params[year]=$y" -year $y | ConvertFrom-Json | ForEach-Object { $_ })
+$season = $seasons | Where-Object { $_.default -eq $true } | Select-Object -First 1
 if (-not $season) { $season = $seasons[0] }
 $s = [string]$season.sais_no
 Write-Host "Saison: $($season.sais_name) ($s)"
