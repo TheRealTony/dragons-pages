@@ -1,15 +1,23 @@
 # Refreshes the saved copy of the league data inside the Dragons page (dragons/index.html).
-# The page shows this copy whenever it cannot read the league site directly.
+# The page shows this copy whenever it cannot read the league site (relay down, league site down).
 # Run it from the tools folder of a copy of this repo: right-click > "Run with PowerShell".
+# Then commit and push dragons/index.html so Netlify publishes the new copy.
 
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Site   = "https://hockeylhai-stconstant.com"
-$TeamNo = 615
-$YearNo = 58      # 2026 - 2027
+$TeamNo = "615"
 $Html   = Join-Path $PSScriptRoot "..\dragons\index.html"
 $Router = "$Site/shark_modules/modules/Router.php?type=data&lang=fr&lang_link_prefix="
+
+# Same columns as dragons/dragons.js
+$CalCols    = "GameNo:GameNoText,GameDate:DatedddDMMMYYYY,TeamLogoCityNameAwayCalendar:TeamImageNameCity,CalendarResult:CalendarResult,TeamLogoCityNameLocalCalendar:TeamImageNameCity,TimeStatus:TimeStatus,PlaceLink:Link"
+$PlayerCols = "Rank:Text,TeamRosterPlayerNumber:Text,PlayerLogoNameWithPosition:ImageNameCityRookie,TeamPlayerPJ:Text,TeamB:Text,TeamA:Text,TeamPlayerPTS:Text,PUN:Text,BAN:Text,BDN:Text,BG:Text"
+$GoalieCols = "Rank:Text,PlayerLogoNameWithPosition:ImageNameCityRookie,TeamGoalerPJ:Text,TeamGoalerV:Text,TeamGoalerDR:Text,TeamGoalerDP:Text,TeamGoalerDF:Text,TeamGoalerN:Text,TeamGoalerBL:Text,TeamGoalerTR:Text,TeamGoalerBC:Text,TeamEFF:Text,TeamMOY:Number_Two_Precision"
+$RosterCols = "TeamRosterPlayerNumber:Text,TeamRosterPlayer:ImageNameLink,TeamRosterPosition:Text"
+$SuspCols   = "SuspensionDate:DateYYYYMMDD,SuspensionPlayerImageName:ImageNameLink,SuspensionTeam:Text,SuspensionMotif:Text,SuspensionPartsNb:SuspensionNbParties,SuspensionEndDate:DateAndTime"
+$RC = "&params[resizer_cache][0][width]=96&params[resizer_cache][0][height]=96"
 
 function Cols($spec) {
     $i = 0
@@ -27,26 +35,42 @@ function Get-Raw($query) {
     $text
 }
 
-# Same queries as the page (see Q in dragons/index.html)
-$seasonsRaw = Get-Raw "&path=Team/&module=TeamSeasons&params[year]=$YearNo&params[teamNo]=$TeamNo"
-$seasons = @($seasonsRaw | ConvertFrom-Json)
+# Answers are stored under "module|year|seasonNo|classNo|teamNo|minGoalie", the key the page looks up
+$answers = [ordered]@{}
+function Save($module, $query, $year = "", $season = "", $cls = "", $team = "", $min = "") {
+    $raw = Get-Raw ("&module=$module" + $query)
+    $script:answers["$module|$year|$season|$cls|$team|$min"] = $raw
+    $raw
+}
+
+$years = @(Save "AvailableYears" "&path=Utilities/" | ConvertFrom-Json)
+$year = $years | Where-Object { $_.default } | Select-Object -First 1
+if (-not $year) { $year = $years[0] }
+$y = [string]$year.sy_no
+
+$seasons = @(Save "AvailableSeason" "&path=Utilities/&params[year]=$y" -year $y | ConvertFrom-Json)
 $season = $seasons | Where-Object { $_.default } | Select-Object -First 1
 if (-not $season) { $season = $seasons[0] }
-$s = $season.sais_no
+$s = [string]$season.sais_no
 Write-Host "Saison: $($season.sais_name) ($s)"
 
-$teamRaw = Get-Raw "&path=&module=Team&params[seasonNo]=$s&params[teamNo]=$TeamNo"
-$classNo = ($teamRaw | ConvertFrom-Json).st_sc_no
+[void](Save "AvailableSeasonClasses" "&path=Utilities/&params[seasonNo]=$s" -season $s)
+$team = Save "Team" "&path=&params[seasonNo]=$s&params[teamNo]=$TeamNo$RC" -season $s -team $TeamNo | ConvertFrom-Json
+$sc = [string]$team.st_sc_no
 
-$calendarRaw = Get-Raw ("&path=&module=TeamCalendar" + (Cols "GameNo:GameNoText,GameDate:DatedddDMMMYYYY,TeamLogoCityNameAwayCalendar:TeamImageNameCity,CalendarResult:CalendarResult,TeamLogoCityNameLocalCalendar:TeamImageNameCity,TimeStatus:TimeStatus,PlaceLink:Link") + "&params[teamNo]=$TeamNo&params[seasonNo]=$s")
-$playersRaw  = Get-Raw ("&path=&module=TeamPlayerStats" + (Cols "Rank:Text,TeamRosterPlayerNumber:Text,PlayerLogoNameWithPosition:ImageNameCityRookie,TeamPlayerPJ:Text,TeamB:Text,TeamA:Text,TeamPlayerPTS:Text,PUN:Text") + "&params[teamNo]=$TeamNo&params[seasonNo]=$s")
-$standingRaw = Get-Raw "&module=Standing&configSection=StandingConfig&params[seasonNo]=$s&params[classNo]=$classNo"
-$suspRaw     = Get-Raw ("&path=&module=Suspension" + (Cols "SuspensionDate:DateYYYYMMDD,SuspensionPlayerImageName:ImageNameLink,SuspensionTeam:Text,SuspensionMotif:Text,SuspensionPartsNb:SuspensionNbParties,SuspensionEndDate:DateAndTime") + "&params[seasonNo]=$s&params[classNo]=")
+[void](Save "AvailableSeasonClassTeams" "&path=Utilities/&params[seasonNo]=$s&params[classNo]=$sc" -season $s -cls $sc)
+[void](Save "TeamCalendar" ("&path=" + (Cols $CalCols) + "&params[teamNo]=$TeamNo&params[seasonNo]=$s$RC") -season $s -team $TeamNo)
+[void](Save "TeamPlayerStats" ("&path=" + (Cols $PlayerCols) + "&params[teamNo]=$TeamNo&params[seasonNo]=$s$RC") -season $s -team $TeamNo)
+foreach ($min in "1", "0") {
+    [void](Save "TeamGoalieStats" ("&path=" + (Cols $GoalieCols) + "&params[teamNo]=$TeamNo&params[seasonNo]=$s&params[minTeamGoalerGamesPercentage]=$min$RC") -season $s -team $TeamNo -min $min)
+}
+[void](Save "TeamRoster" ("&path=" + (Cols $RosterCols) + "&params[teamNo]=$TeamNo&params[seasonNo]=$s$RC") -season $s -team $TeamNo)
+[void](Save "Standing" "&path=&configSection=StandingConfig&params[seasonNo]=$s&params[classNo]=$sc$RC" -season $s -cls $sc)
+[void](Save "Suspension" ("&path=" + (Cols $SuspCols) + "&params[seasonNo]=$s&params[classNo]=$RC") -season $s)
 
 # The answers are already JSON: they are stored as received
-$json = '{"fetchedAt":"' + (Get-Date).ToString("o") + '","seasonNo":"' + $s + '","data":{' +
-    '"seasons":' + $seasonsRaw + ',"team":' + $teamRaw + ',"calendar":' + $calendarRaw +
-    ',"standing":' + $standingRaw + ',"players":' + $playersRaw + ',"susp":' + $suspRaw + '}}'
+$parts = foreach ($k in $answers.Keys) { '"' + $k + '":' + $answers[$k] }
+$json = '{"fetchedAt":"' + (Get-Date).ToString("o") + '","seasonNo":"' + $s + '","answers":{' + ($parts -join ",") + '}}'
 $json = $json.Replace("<", "<")     # keeps the data from closing its <script> block
 
 $block = "<!--SNAPSHOT-START-->`n<script id=`"snapshot`" type=`"application/json`">" + $json + "</script>`n<!--SNAPSHOT-END-->"
