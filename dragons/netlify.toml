@@ -1,0 +1,10 @@
+# Netlify site for the Dragons page. In Netlify, set Base directory = dragons; nothing else to fill in.
+[build]
+  publish = "."
+  command = ""
+
+# Old address of the page keeps working
+[[redirects]]
+  from = "/dragons2026-2027.html"
+  to = "/"
+  status = 301
