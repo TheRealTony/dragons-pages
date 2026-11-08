@@ -934,6 +934,8 @@ async function openOpponent(no) {
         if (g.score && isFinal(g)) { const home = g.home.no === no; rec.bp += home ? g.score.h : g.score.a; rec.bc += home ? g.score.a : g.score.h; }
     });
     const h2h = state.games.filter(g => isPlayed(g) && (g.home.no === no || g.away.no === no) && g.score).sort((a, b) => b.start - a.start);
+    // Next time the team shown plays them (and the dates after that)
+    const [nextVs, ...laterVs] = state.games.filter(g => !isPlayed(g) && (g.home.no === no || g.away.no === no)).sort((a, b) => a.start - b.start);
     const h2hRec = { win: 0, loss: 0, tie: 0 };
     h2h.forEach(g => { const r = resultOf(g, state.teamNo); if (r) h2hRec[r]++; });
 
@@ -954,6 +956,12 @@ async function openOpponent(no) {
                 <div class="opp-sub">${row?.rank && seasonStarted() ? `${ordinal(row.rank)} de la division · ${row.pts} pts · ` : ""}${rec.bp} BP · ${rec.bc} BC${row && seasonStarted() ? "" : " · compté à partir de leurs matchs"}</div>
             </div>
         </div>
+        <h4>Prochain match contre eux</h4>
+        ${nextVs ? `<div class="next-vs">
+            <div class="next-vs-top"><b>${esc(cap(fmtDayLong.format(nextVs.start)))}${nextVs.hasTime ? ` · ${esc(fmtTime.format(nextVs.start))}` : ""}</b><span class="badge ${isLive(nextVs) ? "live" : "duel"}">${esc(countdown(nextVs))}</span></div>
+            <div class="next-vs-sub">${esc(myTeamName())} ${nextVs.home.no === state.teamNo ? "reçoit" : "visite"} ${esc(name)} · ${esc(surfaceLabel(nextVs.surface))}${nextVs.no ? ` · #${esc(nextVs.no)}` : ""}</div>
+            ${laterVs.length ? `<div class="next-vs-more">Ensuite : ${laterVs.map(g => esc(fmtDayShort.format(g.start))).join(", ")}</div>` : ""}
+        </div>` : `<div class="hint">Aucun autre match prévu contre eux cette saison.</div>`}
         ${formStrip(games, no) ? `<h4>5 derniers matchs</h4><div class="form big">${formStrip(games, no).replace(/^<span[^>]*>|<\/span>$/g, "")}</div>` : ""}
         <h4>Face à face${h2h.length ? ` · ${esc(myTeamName())} ${h2hRec.win}-${h2hRec.loss}-${h2hRec.tie}` : ""}</h4>
         ${h2h.length ? `<div class="mini-list">${h2h.map(g => miniGame(g, state.teamNo)).join("")}</div>` : `<div class="hint">Aucun match joué entre les deux équipes cette saison.</div>`}
