@@ -1094,17 +1094,17 @@ async function openSummary(gameNo) {
             ${res ? `<span class="badge ${res}">${RESULT_LABEL[res]}</span>` : ""}</div>
         <div class="sum-team">${teamMark(H, "xl")}<b>${H.no && H.no !== state.teamNo ? teamLink(H) : esc(H.name)}</b><small>Local${H.fiche ? ` · ${esc(H.fiche)}` : ""}</small></div>
     </div>
-    <div class="sum-meta">${esc([s.start ? cap(fmtDayLong.format(s.start)) : "", s.start ? fmtTime.format(s.start) : "", s.className, `#${gameNo}`].filter(Boolean).join(" · "))}</div>`;
+    <div class="sum-meta">${esc([s.start ? cap(fmtDayLong.format(s.start)) : "", s.start ? fmtTime.format(s.start) : "", s.className].filter(Boolean).join(" · "))} · <a class="ext" target="_blank" rel="noopener" href="${esc(`${SITE}/sommaire/?gameNo=${encodeURIComponent(gameNo)}`)}" title="Sommaire sur le site de la ligue">#${esc(gameNo)} ↗</a></div>`;
 
-    // Score by period (+ shootout), with shots
+    // Score by period (+ shootout)
     const pcols = s.periods.map(p => p.short);
     const soWin = s.shootout ? (H.score > A.score ? "home" : "away") : "";
     const line = (t, home) => `<tr${t.no === state.teamNo ? ` class="me"` : ""}><td class="c-team"><span class="cell-id">${teamMark(t, "sm")}<span class="nm">${esc(t.name)}</span></span></td>
         ${pcols.map(p => `<td>${s.goals.filter(x => x.p === p && x.home === home).length}</td>`).join("")}
         ${s.shootout ? `<td>${soWin === (home ? "home" : "away") ? 1 : 0}</td>` : ""}
-        <td class="c-pts">${t.score}</td><td class="muted">${t.stats?.shots ?? "–"}</td></tr>`;
+        <td class="c-pts">${t.score}</td></tr>`;
     const board_ = `<div class="panel tight"><div class="table-scroll"><table class="standings scoreboard">
-        <thead><tr><th class="c-team">Équipe</th>${pcols.map(p => `<th>${esc(p)}</th>`).join("")}${s.shootout ? `<th title="Fusillade">TB</th>` : ""}<th class="c-pts">T</th><th title="Tirs au but">Tirs</th></tr></thead>
+        <thead><tr><th class="c-team">Équipe</th>${pcols.map(p => `<th>${esc(p)}</th>`).join("")}${s.shootout ? `<th title="Fusillade">TB</th>` : ""}<th class="c-pts">T</th></tr></thead>
         <tbody>${line(A, false)}${line(H, true)}</tbody></table></div></div>`;
 
     // Official statistics, visitor on the left and home team on the right (same four boxes as the Spordle pages)
@@ -1112,7 +1112,9 @@ async function openSummary(gameNo) {
     const val = (v) => v ?? "–";
     const pk = (t, o) => o.stats?.ppo != null && o.stats?.ppg != null ? { k: o.stats.ppo - o.stats.ppg, n: o.stats.ppo } : null;
     const pkA = pk(A, H), pkH = pk(H, A);
-    const shotsOf = (t) => { const n = parseInt(t.stats?.shots, 10); return Number.isFinite(n) && n > 0 ? n : null; };
+    // Scoring depth: number of different players who scored
+    const depth = (home) => ({ scorers: new Set(s.goals.filter(x => x.home === home && x.scorer).map(x => x.scorer.id || norm(x.scorer.name))).size });
+    const dA = depth(false), dH = depth(true);
     const nPen = (home) => s.pens.filter(x => x.home === home).length;
     const box = (label, a, h, aSub = "", hSub = "") => `<div class="gs-box">
         <div class="gs-label">${label}</div>
@@ -1125,7 +1127,7 @@ async function openSummary(gameNo) {
         ${box("Avantage num.", `${val(A.stats.ppg)}/${val(A.stats.ppo)}`, `${val(H.stats.ppg)}/${val(H.stats.ppo)}`, pct(A.stats.ppg, A.stats.ppo), pct(H.stats.ppg, H.stats.ppo))}
         ${box("Désavantage num.", pkA ? `${pkA.k}/${pkA.n}` : "–", pkH ? `${pkH.k}/${pkH.n}` : "–", pkA ? pct(pkA.k, pkA.n) : "", pkH ? pct(pkH.k, pkH.n) : "")}
         ${box("Minutes de punition", A.stats.pim, H.stats.pim, `${nPen(false)} pun.`, `${nPen(true)} pun.`)}
-        ${box("Tirs au but", val(shotsOf(A)), val(shotsOf(H)), shotsOf(A) ? `${pct(A.score, shotsOf(A))} eff.` : "", shotsOf(H) ? `${pct(H.score, shotsOf(H))} eff.` : "")}
+        ${box("Buteurs différents", dA.scorers, dH.scorers)}
     </div>` : "";
 
     // Goals and penalties by period, in game-clock order, with the player's photo
