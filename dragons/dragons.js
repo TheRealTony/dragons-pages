@@ -1181,7 +1181,7 @@ async function openPlayer(id) {
         </tbody></table></div>`;
     }
     if (!sk.length && !gk.length) html += `<div class="hint">Aucune statistique enregistrée.</div>`;
-    html += `<div class="view-foot"><span>Pun = minutes de punition</span>${ext(`${SITE}/joueurs/?playerNo=${encodeURIComponent(id)}`, "Site de la ligue")}</div>`;
+    html += `<div class="view-foot"><span>Pun = minutes de punition</span>${ext(`${SITE}/liste-des-joueurs/`, "Site de la ligue")}</div>`;
     openSheet(esc(info.sp_player_name || "Joueur"), html);
 }
 
