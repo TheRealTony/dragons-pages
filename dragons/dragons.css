@@ -75,6 +75,17 @@ button { font: inherit; color: inherit; }
 .brand p { margin: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand > div { min-width: 0; }
 
+.lang-switch {
+    flex: none; display: flex; padding: 2px; gap: 2px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface);
+}
+.lang-switch button {
+    min-width: 34px; height: 32px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent;
+    font: inherit; font-size: 13px; font-weight: 700; letter-spacing: .02em; color: var(--muted); cursor: pointer;
+}
+.lang-switch button:hover { color: var(--text); }
+.lang-switch button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink, #141922); }
+
 .icon-btn {
     flex: none; width: 38px; height: 38px; border-radius: 10px;
     border: 1px solid var(--border); background: var(--surface);

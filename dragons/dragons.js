@@ -21,24 +21,65 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<"
 const int = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
 const num = (v) => { const n = parseFloat(String(v ?? "").replace(",", ".")); return Number.isFinite(n) ? n : null; };
 const norm = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
-const dec = (n, d = 2) => n == null ? "–" : n.toFixed(d).replace(".", ",");
+const dec = (n, d = 2) => n == null ? "–" : n.toFixed(d).replace(".", EN ? "." : ",");
 
-const fmtDayShort = new Intl.DateTimeFormat("fr-CA", { weekday: "short", day: "numeric", month: "short" });
-const fmtTime = new Intl.DateTimeFormat("fr-CA", { hour: "2-digit", minute: "2-digit" });
-const fmtDayLong = new Intl.DateTimeFormat("fr-CA", { weekday: "long", day: "numeric", month: "long" });
-const fmtDate = new Intl.DateTimeFormat("fr-CA", { day: "numeric", month: "short", year: "numeric" });
-const fmtDeadline = new Intl.DateTimeFormat("fr-CA", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+// ---------- Language (French by default; English when chosen with the FR | EN switch or ?lang=en) ----------
+const LANG = (() => {
+    const q = new URLSearchParams(location.search).get("lang");
+    try {
+        if (q === "en" || q === "fr") { localStorage.setItem(LS_PREFIX + "lang", JSON.stringify(q)); return q; }
+        return JSON.parse(localStorage.getItem(LS_PREFIX + "lang")) === "en" ? "en" : "fr";
+    } catch { return q === "en" ? "en" : "fr"; }
+})();
+const EN = LANG === "en";
+const T = (fr, en) => EN ? en : fr;
+const LOC = EN ? "en-CA" : "fr-CA";
+const plural = (n, fr, en) => `${n} ${T(fr, en)}${n > 1 ? "s" : ""}`;
+document.documentElement.lang = LANG;
+
+const fmtDayShort = new Intl.DateTimeFormat(LOC, { weekday: "short", day: "numeric", month: "short" });
+const fmtTime = new Intl.DateTimeFormat(LOC, { hour: "numeric", minute: "2-digit" });
+const fmtDayLong = new Intl.DateTimeFormat(LOC, { weekday: "long", day: "numeric", month: "long" });
+const fmtDate = new Intl.DateTimeFormat(LOC, { day: "numeric", month: "short", year: "numeric" });
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-const ordinal = (n) => n === 1 ? "1ᵉʳ" : `${n}ᵉ`;
+const ordinal = (n) => EN ? `${n}${[, "st", "nd", "rd"][(n % 100 >> 3 ^ 1 && n % 10)] || "th"}` : n === 1 ? "1ᵉʳ" : `${n}ᵉ`;
 const cap = (s) => s ? s[0].toUpperCase() + s.slice(1) : s;
-// "SERIES ETE 2026" -> "Séries été 2026"; names typed in mixed case by the league are kept as typed
+
+// League names are French only (the feed's English fields are empty): translate the usual words
+const WORDS_EN = [
+    [/(?<!\p{L})s[eé]ries(?!\p{L})/giu, "Playoffs"], [/\bautomne\b/gi, "Fall"], [/\bhiver\b/gi, "Winter"], [/(?<!\p{L})[eé]t[eé](?!\p{L})/giu, "Summer"], [/\bprintemps\b/gi, "Spring"],
+    [/\blundi\b/gi, "Monday"], [/\bmardi\b/gi, "Tuesday"], [/\bmercredi\b/gi, "Wednesday"], [/\bjeudi\b/gi, "Thursday"], [/\bvendredi\b/gi, "Friday"],
+    [/\bsamedi\b/gi, "Saturday"], [/\bdimanche\b/gi, "Sunday"], [/(?<!\p{L})[eé]quipes inactives(?!\p{L})/giu, "Inactive teams"], [/\bglace\b/gi, "Rink"],
+];
+const leagueText = (s) => EN ? WORDS_EN.reduce((t, [re, w]) => t.replace(re, w), String(s || "")) : String(s || "");
+// "SERIES ETE 2026" -> "Séries été 2026" / "Summer 2026 Playoffs"; names typed in mixed case by the league are kept as typed
 function seasonLabel(name, dropSeries = false) {
-    let s = String(name || "").trim();
+    let s = String(name || "").trim().replace(/\s+/g, " ");
     if (s === s.toUpperCase()) s = s.toLowerCase();
-    s = s.replace(/\b(e|é)t(e|é)\b/gi, "été").replace(/\bs(e|é)ries\b/gi, "séries");
-    if (dropSeries) s = s.replace(/^séries\s+/i, "");
+    s = s.replace(/(?<!\p{L})[eé]t[eé](?!\p{L})/giu, "été").replace(/(?<!\p{L})s[eé]ries(?!\p{L})/giu, "séries");
+    const series = /^séries\s+/i.test(s);
+    if (dropSeries || EN) s = s.replace(/^séries\s+/i, "");
+    if (EN) { s = cap(leagueText(s)); return series && !dropSeries ? `${s} Playoffs` : s; }
     return cap(s);
 }
+// Penalty names (and suspension reasons) in English when they are one of the usual infractions
+const PEN_EN = [
+    ["DOUBLE ECHEC", "Cross-checking"], ["DOUBLE-ECHEC", "Cross-checking"], ["DOUBLE MINEURE", "Double minor"], ["RETENIR LE BATON", "Holding the stick"], ["RETENIR", "Holding"],
+    ["ACCROCHER", "Hooking"], ["FAIRE TREBUCHER", "Tripping"], ["TREBUCHER", "Tripping"], ["CINGLER", "Slashing"], ["DARDER", "Spearing"], ["RUDESSE", "Roughing"],
+    ["BATON ELEVE", "High-sticking"], ["OBSTRUCTION", "Interference"], ["MISE EN ECHEC PAR DERRIERE", "Checking from behind"], ["MISE EN ECHEC A LA TETE", "Check to the head"],
+    ["CONTACT A LA TETE", "Head contact"], ["MISE EN ECHEC CONTRE LA BANDE", "Boarding"], ["PLAQUAGE", "Boarding"], ["MISE EN ECHEC", "Body checking"], ["ASSAUT", "Charging"],
+    ["COUP DE COUDE", "Elbowing"], ["COUP DE GENOU", "Kneeing"], ["COUP DE PIED", "Kicking"], ["COUP DE TETE", "Head-butting"], ["DONNER DE LA TETE", "Head-butting"],
+    ["CONDUITE ANTISPORTIVE", "Unsportsmanlike conduct"], ["TROP DE JOUEURS", "Too many players"], ["RETARDER", "Delay of game"], ["BAGARRE", "Fighting"],
+    ["GROSSIERE INCONDUITE", "Gross misconduct"], ["INCONDUITE DE PARTIE", "Game misconduct"], ["INCONDUITE DE MATCH", "Match misconduct"], ["INCONDUITE", "Misconduct"],
+    ["SIMULATION", "Diving"], ["PLONGEON", "Diving"], ["ABUS", "Abuse of officials"], ["EQUIPEMENT ILLEGAL", "Illegal equipment"], ["LANCER LE BATON", "Throwing the stick"],
+    ["BATON BRISE", "Broken stick"], ["GARDIEN", "Goalkeeper interference"], ["MAJEURE", "Major"], ["MINEURE", "Minor"], ["PUNITION DE BANC", "Bench minor"],
+];
+const penaltyText = (s) => {
+    if (!EN || !s) return s || "";
+    const n = norm(s).replace(/-/g, " ");
+    const hit = PEN_EN.find(([fr]) => n.startsWith(fr.replace(/-/g, " ")));
+    return hit ? hit[1] + (/\bMAJ/.test(n) && hit[1] !== "Major" ? " (major)" : "") : s;
+};
 
 const LS = {
     get(k, fallback = null) { try { const v = localStorage.getItem(LS_PREFIX + k); return v == null ? fallback : JSON.parse(v); } catch { return fallback; } },
@@ -304,7 +345,7 @@ const isFinal = (g) => g.status === "END" || g.status === "FORFAIT" || (!!g.stat
 const isLive = (g) => !!g.status && !isFinal(g);
 // Finished = final, or started more than 3 h ago (score not entered yet)
 const isPlayed = (g) => isFinal(g) || (!g.status && g.start.getTime() < LONG_AGO());
-const RESULT_LABEL = { win: "Victoire", loss: "Défaite", tie: "Nulle" };
+const RESULT_LABEL = EN ? { win: "Win", loss: "Loss", tie: "Tie" } : { win: "Victoire", loss: "Défaite", tie: "Nulle" };
 
 function resultOf(g, teamNo) {
     if (!g.score || !isFinal(g)) return null;
@@ -342,7 +383,7 @@ const shownSeasonNo = () => shownSeason()?.no || null;
 const currentClass = () => state.classes.find(c => c.classNo === state.classNo) || null;
 const standRow = (no) => state.standing?.find(r => r.no === no) || null;
 const seasonStarted = () => !!state.standing && state.standing.some(r => r.pj > 0);
-const myTeamName = () => state.team?.st_equip_name || state.teams.find(t => t.no === state.teamNo)?.name || "Équipe";
+const myTeamName = () => state.team?.st_equip_name || state.teams.find(t => t.no === state.teamNo)?.name || T("Équipe", "Team");
 
 function recordText(no) {
     const r = standRow(no);
@@ -423,7 +464,7 @@ async function loadSeason() {
     } catch (e) {
         console.warn(e);
         if (token !== loadToken) return;
-        Object.assign(state, { loading: false, error: "Impossible de lire les données de la ligue." });
+        Object.assign(state, { loading: false, error: T("Impossible de lire les données de la ligue.", "Could not read the league data.") });
         progress(false); renderAll();
     }
 }
@@ -465,7 +506,7 @@ async function loadTeam(token = ++loadToken, team = null, fresh = false) {
     ]);
     if (token !== loadToken) return;
     if (!cal) {
-        Object.assign(state, { loading: false, error: "Impossible de lire l'horaire de l'équipe." });
+        Object.assign(state, { loading: false, error: T("Impossible de lire l'horaire de l'équipe.", "Could not read the team schedule.") });
         progress(false); renderAll();
         return;
     }
@@ -522,12 +563,13 @@ setInterval(() => { const el = document.querySelector("[data-countdown]"); if (e
 const ICON_CHEVRON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`;
 const ICON_STAR = `<svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>`;
 const ICON_CAL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>`;
+const LEAGUE_SITE = () => T("Site de la ligue", "League website");
 const ext = (href, label) => `<a class="ext" target="_blank" rel="noopener" href="${esc(href)}">${label} ↗</a>`;
 const skeletons = (n, slim = false) => `<div class="cards">${`<div class="skeleton${slim ? " slim" : ""}"></div>`.repeat(n)}</div>`;
 // All games are played at the same complex: only the rink name is shown
-const surfaceLabel = (s) => String(s || "").trim() || "Glace à déterminer";
+const surfaceLabel = (s) => leagueText(String(s || "").trim()) || T("Glace à déterminer", "Rink to be announced");
 const ICON_PIN = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>`;
-const teamLink = (t, label = t.name) => t.no ? `<button type="button" class="link-btn" data-opp="${esc(t.no)}">${esc(label || "À déterminer")}</button>` : esc(label || "À déterminer");
+const teamLink = (t, label = t.name) => t.no ? `<button type="button" class="link-btn" data-opp="${esc(t.no)}">${esc(label || T("À déterminer", "TBD"))}</button>` : esc(label || T("À déterminer", "TBD"));
 const playerLink = (p) => p.id ? `<button type="button" class="link-btn" data-player="${esc(p.id)}">${esc(p.name)}</button>` : esc(p.name);
 const select = (id, label, options, value, disabled = false) => `<div class="select-wrap">
     <select id="${id}" aria-label="${esc(label)}"${disabled ? " disabled" : ""}>${options}</select>${ICON_CHEVRON}</div>`;
@@ -540,8 +582,8 @@ function teamRow(team, side, pts, lead, rec, myNo) {
     return `<div class="${cls.join(" ")}" style="--dot:${esc(team.colour || "var(--border)")}">
         ${teamMark(team)}
         <span class="name" title="${esc(team.name)}">${mine ? esc(team.name) : teamLink(team)}</span>
-        ${rec ? `<span class="rec" title="Fiche V-D-N et rang">${esc(rec)}</span>` : ""}
-        <span class="side">${side === "home" ? "Local" : "Visiteur"}</span>
+        ${rec ? `<span class="rec" title="${T("Fiche V-D-N et rang", "W-L-T record and rank")}">${esc(rec)}</span>` : ""}
+        <span class="side">${side === "home" ? T("Local", "Home") : T("Visiteur", "Away")}</span>
         ${rec ? "" : `<span class="pts">${pts ?? ""}</span>`}
     </div>`;
 }
@@ -551,11 +593,11 @@ function gameCard(g, myNo = state.teamNo, withLineup = true) {
     const lead = sc ? (sc.h > sc.a ? "home" : sc.a > sc.h ? "away" : "tie") : null;
     const when = `${fmtDayShort.format(g.start)}${g.hasTime ? ` · ${fmtTime.format(g.start)}` : ""}`;
     const badges = [];
-    if (live) badges.push(`<span class="badge live">En direct${g.period ? ` · ${esc(g.period)}` : ""}</span>`);
+    if (live) badges.push(`<span class="badge live">${T("En direct", "Live")}${g.period ? ` · ${esc(g.period)}` : ""}</span>`);
     if (result) badges.push(`<span class="badge ${result}">${RESULT_LABEL[result]}</span>`);
-    if (g.status === "FORFAIT") badges.push(`<span class="badge">Forfait</span>`);
-    if (g.shootout && isFinal(g)) badges.push(`<span class="badge">Fusillade</span>`);
-    if (isPlayed(g) && !g.status) badges.push(`<span class="badge" title="La ligue n'a pas encore inscrit le pointage">Résultat non saisi</span>`);
+    if (g.status === "FORFAIT") badges.push(`<span class="badge">${T("Forfait", "Forfeit")}</span>`);
+    if (g.shootout && isFinal(g)) badges.push(`<span class="badge">${T("Fusillade", "Shootout")}</span>`);
+    if (isPlayed(g) && !g.status) badges.push(`<span class="badge" title="${T("La ligue n'a pas encore inscrit le pointage", "The league has not entered the score yet")}">${T("Résultat non saisi", "No result entered")}</span>`);
     if (g.no) badges.push(`<span class="badge">#${esc(g.no)}</span>`);
 
     const upcoming = !sc && !isPlayed(g);
@@ -563,13 +605,13 @@ function gameCard(g, myNo = state.teamNo, withLineup = true) {
     const homeRec = upcoming && g.home.no !== myNo ? recordText(g.home.no) : "";
     const hasLineup = withLineup && !!readLineup(g.no, myNo);
     const lineupBtn = withLineup && myNo === state.teamNo
-        ? `<button type="button" class="lu-btn${hasLineup ? " has" : ""}" data-lineup="${esc(g.no)}">${isPlayed(g) ? (hasLineup ? "Alignement utilisé" : "+ Alignement") : "Alignement"}</button>` : "";
+        ? `<button type="button" class="lu-btn${hasLineup ? " has" : ""}" data-lineup="${esc(g.no)}">${isPlayed(g) ? (hasLineup ? T("Alignement utilisé", "Lineup used") : T("+ Alignement", "+ Lineup")) : T("Alignement", "Lineup")}</button>` : "";
     // Everything stays on this page: the summary opens in the side sheet, like the Roussillon and Chambly pages
     const opp = oppOf(g, myNo);
     const links = g.no ? `<div class="links">
         ${lineupBtn}
-        ${opp.no ? `<button type="button" class="lu-btn" data-opp="${esc(opp.no)}">Adversaire</button>` : ""}
-        ${isFinal(g) ? `<button type="button" class="lu-btn sum" data-summary="${esc(g.no)}">Sommaire</button>` : ""}
+        ${opp.no ? `<button type="button" class="lu-btn" data-opp="${esc(opp.no)}">${T("Adversaire", "Opponent")}</button>` : ""}
+        ${isFinal(g) ? `<button type="button" class="lu-btn sum" data-summary="${esc(g.no)}">${T("Sommaire", "Summary")}</button>` : ""}
     </div>` : "";
 
     return `<article class="game${g.home.no === myNo ? " home" : ""}"${result ? ` data-result="${result}"` : ""}>
@@ -593,28 +635,28 @@ function renderPicker() {
         return list.length ? `<optgroup label="${esc(y.name)}">${list.map(s =>
             `<option value="${esc(s.no)}"${s.no === state.seasonNo ? " selected" : ""}>${esc(seasonLabel(s.name))}</option>`).join("")}</optgroup>` : "";
     }).join("");
-    const classOpts = state.classes.map(c => `<option value="${esc(c.classNo)}"${c.classNo === state.classNo ? " selected" : ""}>${esc(c.name)}</option>`).join("");
-    const teamOpts = (state.missing && state.teamNo ? `<option value="" selected>Choisir une équipe…</option>` : "")
+    const classOpts = state.classes.map(c => `<option value="${esc(c.classNo)}"${c.classNo === state.classNo ? " selected" : ""}>${esc(leagueText(c.name))}</option>`).join("");
+    const teamOpts = (state.missing && state.teamNo ? `<option value="" selected>${T("Choisir une équipe…", "Choose a team…")}</option>` : "")
         + state.teams.map(t => `<option value="${esc(t.no)}"${t.no === state.teamNo && !state.missing ? " selected" : ""}>${esc(t.name)}</option>`).join("");
     const isDefault = state.teamNo && LS.get("default_team") === state.teamNo;
 
     el.innerHTML = `<div class="picker">
         <div>
-            <span class="field-label">Saison</span>
+            <span class="field-label">${T("Saison", "Season")}</span>
             <div class="field-row">
-                ${select("seasonSelect", "Saison", groups, state.seasonNo)}
-                <div class="seg" role="tablist" aria-label="Saison ou séries">
-                    <button type="button" data-playoffs="0" aria-selected="${!state.playoffs || !series}">Saison</button>
-                    <button type="button" data-playoffs="1" aria-selected="${state.playoffs && !!series}"${series ? "" : " disabled title=\"Pas de séries pour cette saison\""}>Séries</button>
+                ${select("seasonSelect", T("Saison", "Season"), groups, state.seasonNo)}
+                <div class="seg" role="tablist" aria-label="${T("Saison ou séries", "Season or playoffs")}">
+                    <button type="button" data-playoffs="0" aria-selected="${!state.playoffs || !series}">${T("Saison", "Season")}</button>
+                    <button type="button" data-playoffs="1" aria-selected="${state.playoffs && !!series}"${series ? "" : ` disabled title="${T("Pas de séries pour cette saison", "No playoffs this season")}"`}>${T("Séries", "Playoffs")}</button>
                 </div>
             </div>
         </div>
         <div>
-            <span class="field-label">Division et équipe</span>
+            <span class="field-label">${T("Division et équipe", "Division and team")}</span>
             <div class="field-row two">
                 ${select("classSelect", "Division", classOpts, state.classNo, !state.classes.length)}
-                ${select("teamSelect", "Équipe", teamOpts, state.teamNo, !state.teams.length)}
-                <button type="button" class="star-btn" id="starBtn" aria-pressed="${!!isDefault}" title="Ouvrir cette équipe par défaut"${state.teamNo && !state.missing ? "" : " disabled"}>${ICON_STAR}<span>Par défaut</span></button>
+                ${select("teamSelect", T("Équipe", "Team"), teamOpts, state.teamNo, !state.teams.length)}
+                <button type="button" class="star-btn" id="starBtn" aria-pressed="${!!isDefault}" title="${T("Ouvrir cette équipe par défaut", "Open this team by default")}"${state.teamNo && !state.missing ? "" : " disabled"}>${ICON_STAR}<span>${T("Par défaut", "Default")}</span></button>
             </div>
         </div>
     </div>`;
@@ -622,15 +664,15 @@ function renderPicker() {
 
 // ---------- Next game (hero) ----------
 function countdown(g) {
-    if (isLive(g)) return "En direct";
+    if (isLive(g)) return T("En direct", "Live");
     const now = new Date();
     const mins = Math.round((g.start - now) / 60000);
     const days = Math.round((startOfDay(g.start) - startOfDay(now)) / 86400000);
-    if (mins <= 0) return "Début imminent";
-    if (mins < 60) return `Dans ${mins} min`;
-    if (days === 0) return `Aujourd'hui · dans ${Math.round(mins / 60)} h`;
-    if (days === 1) return "Demain";
-    return `Dans ${days} jours`;
+    if (mins <= 0) return T("Début imminent", "Starting soon");
+    if (mins < 60) return T(`Dans ${mins} min`, `In ${mins} min`);
+    if (days === 0) return T(`Aujourd'hui · dans ${Math.round(mins / 60)} h`, `Today · in ${Math.round(mins / 60)} h`);
+    if (days === 1) return T("Demain", "Tomorrow");
+    return T(`Dans ${days} jours`, `In ${days} days`);
 }
 
 function nextGameCard() {
@@ -643,21 +685,21 @@ function nextGameCard() {
     const firstGame = !state.games.some(isPlayed);
     return `<article class="next">
         <div class="next-top">
-            <span class="next-label">${firstGame ? "La saison commence" : "Prochain match"}</span>
+            <span class="next-label">${firstGame ? T("La saison commence", "Season opener") : T("Prochain match", "Next game")}</span>
             <span class="badge ${isLive(g) ? "live" : "duel"}" data-countdown>${esc(countdown(g))}</span>
         </div>
         <div class="next-when">${esc(cap(day))}${g.hasTime ? ` · ${esc(fmtTime.format(g.start))}` : ""}</div>
         <div class="next-match">
             <strong>${esc(me.name || myTeamName())}</strong>
-            <span class="vs">${isHome ? "reçoit" : "visite"}</span>
+            <span class="vs">${isHome ? T("reçoit", "vs") : T("visite", "at")}</span>
             <strong>${teamLink(opp)}</strong>
             ${oppRec ? `<span class="rec">(${esc(oppRec)})</span>` : ""}
         </div>
         <div class="next-foot">
-            <div class="next-venue"><div><b>${esc(surfaceLabel(g.surface))}</b>${isHome ? "Local" : "Visiteur"} · partie #${esc(g.no)}</div></div>
+            <div class="next-venue"><div><b>${esc(surfaceLabel(g.surface))}</b>${isHome ? T("Local", "Home") : T("Visiteur", "Away")} · ${T("partie", "game")} #${esc(g.no)}</div></div>
             <div class="next-btns">
-                ${opp.no ? `<button type="button" class="btn ghost" data-opp="${esc(opp.no)}">Adversaire</button>` : ""}
-                <button type="button" class="btn" data-lineup="${esc(g.no)}">Alignement</button>
+                ${opp.no ? `<button type="button" class="btn ghost" data-opp="${esc(opp.no)}">${T("Adversaire", "Opponent")}</button>` : ""}
+                <button type="button" class="btn" data-lineup="${esc(g.no)}">${T("Alignement", "Lineup")}</button>
             </div>
         </div>
     </article>`;
@@ -667,7 +709,7 @@ function nextGameCard() {
 function formStrip(games, teamNo) {
     const last = games.filter(g => isPlayed(g) && resultOf(g, teamNo)).sort((a, b) => b.start - a.start).slice(0, 5).reverse();
     if (!last.length) return "";
-    return `<span class="form" aria-label="Cinq dernières parties">${last.map(g => {
+    return `<span class="form" aria-label="${T("Cinq dernières parties", "Last five games")}">${last.map(g => {
         const r = resultOf(g, teamNo), opp = oppOf(g, teamNo);
         return `<i class="${r}" title="${esc(`${fmtDayShort.format(g.start)} · ${opp.name} · ${scoreFor(g, teamNo)}`)}">${RESULT_LABEL[r][0]}</i>`;
     }).join("")}</span>`;
@@ -690,9 +732,9 @@ function teamHead() {
     played.forEach(g => { const r = resultOf(g, state.teamNo); if (r) rec[r]++; });
     if (row && seasonStarted()) Object.assign(rec, { win: row.v, loss: row.losses, tie: row.n });
     const rank = row && seasonStarted() && row.rank
-        ? `<span class="rank-badge" title="Rang dans la division">${ordinal(row.rank)} sur ${state.standing.length} · ${row.pts} pts</span>` : "";
+        ? `<span class="rank-badge" title="${T("Rang dans la division", "Rank in the division")}">${ordinal(row.rank)} ${T("sur", "of")} ${state.standing.length} · ${row.pts} pts</span>` : "";
     const nSusp = (mySusp()?.mine || []).filter(isActiveSusp).length;
-    const susp = nSusp ? `<button type="button" class="badge loss" data-view="susp">🚫 ${nSusp} suspension${nSusp > 1 ? "s" : ""}</button>` : "";
+    const susp = nSusp ? `<button type="button" class="badge loss" data-view="susp">🚫 ${plural(nSusp, "suspension", "suspension")}</button>` : "";
     const img = state.team?.st_equip_img ? sized(state.team.st_equip_img, 160) : state.teamNo === DRAGONS_NO ? DRAGONS_LOGO : "";
     const logo = img ? `<img class="team-logo" src="${esc(img)}" alt="" loading="lazy" onerror="this.remove()">` : "";
     return `<div class="team-head">
@@ -701,14 +743,14 @@ function teamHead() {
             <div>
                 <h3>${esc(myTeamName())}</h3>
                 <div class="team-meta">
-                    <span class="record" aria-label="Fiche"><span class="w">${rec.win} V</span><span class="l">${rec.loss} D</span><span class="t">${rec.tie} N</span></span>
+                    <span class="record" aria-label="${T("Fiche", "Record")}"><span class="w">${rec.win} ${T("V", "W")}</span><span class="l">${rec.loss} ${T("D", "L")}</span><span class="t">${rec.tie} ${T("N", "T")}</span></span>
                     ${rank}${formStrip(state.games, state.teamNo)}${susp}
                 </div>
             </div>
         </div>
         <div class="ics-wrap">
-            <button type="button" class="ics-btn" id="icsBtn" title="Télécharger l'horaire dans mon calendrier">${ICON_CAL}<span>.ics</span></button>
-            <span class="ics-hint" id="icsHint">⬅ Ajouter à mon calendrier</span>
+            <button type="button" class="ics-btn" id="icsBtn" title="${T("Télécharger l'horaire dans mon calendrier", "Download the schedule to my calendar")}">${ICON_CAL}<span>.ics</span></button>
+            <span class="ics-hint" id="icsHint">${T("⬅ Ajouter à mon calendrier", "⬅ Add to my calendar")}</span>
         </div>
     </div>`;
 }
@@ -721,28 +763,28 @@ function scheduleView() {
     const opps = new Map();
     played.forEach(g => { const o = oppOf(g, state.teamNo); if (o.no) opps.set(o.no, { name: o.name, n: (opps.get(o.no)?.n || 0) + 1 }); });
     if (!opps.has(state.opp)) state.opp = "";
-    const filter = tab === "results" && opps.size > 1 ? `<div class="opp-pick">${select("oppSelect", "Filtrer par adversaire",
-        `<option value="">Tous les adversaires (${played.length})</option>` + [...opps].sort((a, b) => a[1].name.localeCompare(b[1].name, "fr"))
+    const filter = tab === "results" && opps.size > 1 ? `<div class="opp-pick">${select("oppSelect", T("Filtrer par adversaire", "Filter by opponent"),
+        `<option value="">${T("Tous les adversaires", "All opponents")} (${played.length})</option>` + [...opps].sort((a, b) => a[1].name.localeCompare(b[1].name, LOC))
             .map(([no, o]) => `<option value="${esc(no)}"${no === state.opp ? " selected" : ""}>${esc(o.name)} (${o.n})</option>`).join(""))}</div>` : "";
     const list = tab === "upcoming" ? upcoming : played.filter(g => !state.opp || oppOf(g, state.teamNo).no === state.opp);
-    const emptyMsg = tab === "upcoming" ? "Aucune partie à venir." : "Aucun résultat pour l'instant.";
+    const emptyMsg = tab === "upcoming" ? T("Aucune partie à venir.", "No upcoming games.") : T("Aucun résultat pour l'instant.", "No results yet.");
 
     return `<div class="team">
         <div class="seg sub-tabs" role="tablist">
-            <button type="button" role="tab" data-tab="upcoming" aria-selected="${tab === "upcoming"}">À venir <span class="count">${upcoming.length}</span></button>
-            <button type="button" role="tab" data-tab="results" aria-selected="${tab === "results"}">Résultats <span class="count">${played.length}</span></button>
+            <button type="button" role="tab" data-tab="upcoming" aria-selected="${tab === "upcoming"}">${T("À venir", "Upcoming")} <span class="count">${upcoming.length}</span></button>
+            <button type="button" role="tab" data-tab="results" aria-selected="${tab === "results"}">${T("Résultats", "Results")} <span class="count">${played.length}</span></button>
         </div>
         ${filter}
-        ${list.some(g => g.home.no === state.teamNo) ? `<div class="legend"><i></i>Parties comme équipe locale</div>` : ""}
+        ${list.some(g => g.home.no === state.teamNo) ? `<div class="legend"><i></i>${T("Parties comme équipe locale", "Home games")}</div>` : ""}
         <div class="cards">${list.length ? list.map(g => gameCard(g)).join("") : `<div class="empty">${emptyMsg}</div>`}</div>
     </div>`;
 }
 
 // ---------- Classement ----------
 function standingsView() {
-    const link = ext(`${SITE}/classement/`, "Site de la ligue");
-    if (!state.standing) return `<div class="notice error" style="margin-top:14px">Classement indisponible pour le moment.<br>${link}</div>`;
-    if (!state.standing.length) return `<div class="empty" style="margin-top:14px">Aucun classement pour cette saison.</div>`;
+    const link = ext(`${SITE}/classement/`, LEAGUE_SITE());
+    if (!state.standing) return `<div class="notice error" style="margin-top:14px">${T("Classement indisponible pour le moment.", "Standings unavailable right now.")}<br>${link}</div>`;
+    if (!state.standing.length) return `<div class="empty" style="margin-top:14px">${T("Aucun classement pour cette saison.", "No standings for this season.")}</div>`;
     const started = seasonStarted();
     const rows = state.standing.slice().sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999) || a.name.localeCompare(b.name, "fr"));
     const body = rows.map(r => {
@@ -756,17 +798,17 @@ function standingsView() {
         </tr>`;
     }).join("");
     return `<div class="panel">
-        <div class="panel-title">${esc(currentClass()?.name || "")} · ${esc(shownSeason()?.name || "")}</div>
+        <div class="panel-title">${esc(leagueText(currentClass()?.name || ""))} · ${esc(seasonLabel(shownSeason()?.name || ""))}</div>
         <div class="table-scroll"><table class="standings">
             <thead><tr>
-                <th class="c-rank">#</th><th class="c-team">Équipe</th>
-                <th title="Parties jouées">PJ</th><th title="Victoires">V</th><th title="Défaites (incluant forfaits)">D</th><th title="Défaites en prolongation ou en fusillade">DP</th><th title="Nulles">N</th>
-                <th class="wide" title="Buts pour">BP</th><th class="wide" title="Buts contre">BC</th><th class="wide" title="Différentiel">+/-</th>
+                <th class="c-rank">#</th><th class="c-team">${T("Équipe", "Team")}</th>
+                <th title="${T("Parties jouées", "Games played")}">${T("PJ", "GP")}</th><th title="${T("Victoires", "Wins")}">${T("V", "W")}</th><th title="${T("Défaites (incluant forfaits)", "Losses (including forfeits)")}">${T("D", "L")}</th><th title="${T("Défaites en prolongation ou en fusillade", "Overtime or shootout losses")}">${T("DP", "OTL")}</th><th title="${T("Nulles", "Ties")}">${T("N", "T")}</th>
+                <th class="wide" title="${T("Buts pour", "Goals for")}">${T("BP", "GF")}</th><th class="wide" title="${T("Buts contre", "Goals against")}">${T("BC", "GA")}</th><th class="wide" title="${T("Différentiel", "Goal differential")}">+/-</th>
                 <th class="c-pts" title="Points">Pts</th>
             </tr></thead>
             <tbody>${body}</tbody>
         </table></div>
-        <div class="panel-foot"><span>${started ? "Classement officiel · touchez une équipe pour sa fiche" : "La saison n'a pas encore commencé."}</span>${link}</div>
+        <div class="panel-foot"><span>${started ? T("Classement officiel · touchez une équipe pour sa fiche", "Official standings · tap a team for its card") : T("La saison n'a pas encore commencé.", "The season hasn't started yet.")}</span>${link}</div>
     </div>`;
 }
 
@@ -778,29 +820,29 @@ function seasonTeamStats(t = state.team) {
     return { pj: int(t.st_stats_pj), ppo, ppg, pko, pkga, pk: pko - pkga, pim: int(t.st_stats_pun), pens: int(t.st_stats_nb_pun_min) + int(t.st_stats_nb_pun_maj),
         home: String(t.st_stats_fiche_local || "").replace(/\s+/g, ""), away: String(t.st_stats_fiche_visit || "").replace(/\s+/g, "") };
 }
-const pctText = (a, b) => b ? `${(100 * a / b).toFixed(1).replace(".", ",").replace(/,0$/, "")} %` : "–";
+const pctText = (a, b) => b ? `${dec(100 * a / b, 1).replace(/[.,]0$/, "")}${T(" %", "%")}` : "–";
 function teamStats() {
     const x = seasonTeamStats();
     if (!x || !x.pj) return "";
     const tile = (label, value, sub = "") => `<div class="gs-box"><div class="gs-label">${label}</div><div class="ts-val"><b>${value}</b>${sub ? `<small>${sub}</small>` : ""}</div></div>`;
-    return `<div class="panel ts-panel"><div class="panel-title">Équipe · ${x.pj} partie${x.pj > 1 ? "s" : ""}</div><div class="gs-grid ts-grid">
-        ${tile("Avantage num.", `${x.ppg}/${x.ppo}`, pctText(x.ppg, x.ppo))}
-        ${tile("Désavantage num.", `${x.pk}/${x.pko}`, pctText(x.pk, x.pko))}
-        ${tile("Minutes de punition", x.pim, `${x.pens} pun. · ${dec(x.pim / x.pj, 1)} par match`)}
-        <div class="gs-box"><div class="gs-label">Fiche V-D-N</div><div class="ts-rec"><span><b>${esc(x.home || "–")}</b> dom.</span><span><b>${esc(x.away || "–")}</b> vis.</span></div></div>
+    return `<div class="panel ts-panel"><div class="panel-title">${T("Équipe", "Team")} · ${plural(x.pj, "partie", "game")}</div><div class="gs-grid ts-grid">
+        ${tile(T("Avantage num.", "Power play"), `${x.ppg}/${x.ppo}`, pctText(x.ppg, x.ppo))}
+        ${tile(T("Désavantage num.", "Penalty kill"), `${x.pk}/${x.pko}`, pctText(x.pk, x.pko))}
+        ${tile(T("Minutes de punition", "Penalty minutes"), x.pim, T(`${x.pens} pun. · ${dec(x.pim / x.pj, 1)} par match`, `${x.pens} pen. · ${dec(x.pim / x.pj, 1)} per game`))}
+        <div class="gs-box"><div class="gs-label">${T("Fiche V-D-N", "W-L-T record")}</div><div class="ts-rec"><span><b>${esc(x.home || "–")}</b> ${T("dom.", "home")}</span><span><b>${esc(x.away || "–")}</b> ${T("vis.", "away")}</span></div></div>
     </div></div>`;
 }
 function statsView() {
-    const link = ext(`${SITE}/equipes/?seasonNo=${encodeURIComponent(shownSeasonNo())}&teamNo=${encodeURIComponent(state.teamNo)}`, "Site de la ligue");
-    const excel = `<div class="stats-actions"><button type="button" class="btn" id="xlsxBtn">⬇ Fichier Excel</button><span class="hint">Équipe, matchs, joueurs et gardiens de la saison affichée</span></div>`;
+    const link = ext(`${SITE}/equipes/?seasonNo=${encodeURIComponent(shownSeasonNo())}&teamNo=${encodeURIComponent(state.teamNo)}`, LEAGUE_SITE());
+    const excel = `<div class="stats-actions"><button type="button" class="btn" id="xlsxBtn">⬇ ${T("Fichier Excel", "Excel file")}</button><span class="hint">${T("Équipe, matchs, joueurs et gardiens de la saison affichée", "Team, games, players and goalies for the season shown")}</span></div>`;
     let players;
-    if (!state.players) players = `<div class="notice error">Statistiques des joueurs indisponibles.<br>${link}</div>`;
-    else if (!state.players.length) players = `<div class="empty">Aucune statistique de joueur pour l'instant.</div>`;
+    if (!state.players) players = `<div class="notice error">${T("Statistiques des joueurs indisponibles.", "Player stats unavailable.")}<br>${link}</div>`;
+    else if (!state.players.length) players = `<div class="empty">${T("Aucune statistique de joueur pour l'instant.", "No player stats yet.")}</div>`;
     else {
         const top = Math.max(...state.players.map(p => p.pts));
-        players = `<div class="panel"><div class="panel-title">Joueurs</div><div class="table-scroll"><table class="standings stats">
-            <thead><tr><th class="c-num">#</th><th class="c-team">Joueur</th><th title="Parties jouées">PJ</th><th title="Buts">B</th><th title="Passes">A</th><th class="c-pts" title="Points">Pts</th>
-                <th title="Minutes de punition">Pun</th><th title="Buts en avantage numérique">BAN</th><th title="Buts en désavantage numérique">BDN</th><th title="Buts gagnants">BG</th></tr></thead>
+        players = `<div class="panel"><div class="panel-title">${T("Joueurs", "Players")}</div><div class="table-scroll"><table class="standings stats">
+            <thead><tr><th class="c-num">#</th><th class="c-team">${T("Joueur", "Player")}</th><th title="${T("Parties jouées", "Games played")}">${T("PJ", "GP")}</th><th title="${T("Buts", "Goals")}">${T("B", "G")}</th><th title="${T("Passes", "Assists")}">A</th><th class="c-pts" title="Points">Pts</th>
+                <th title="${T("Minutes de punition", "Penalty minutes")}">${T("Pun", "PIM")}</th><th title="${T("Buts en avantage numérique", "Power-play goals")}">${T("BAN", "PPG")}</th><th title="${T("Buts en désavantage numérique", "Shorthanded goals")}">${T("BDN", "SHG")}</th><th title="${T("Buts gagnants", "Game-winning goals")}">${T("BG", "GWG")}</th></tr></thead>
             <tbody>${state.players.map(p => `<tr class="${top > 0 && p.pts === top ? "top" : ""}">
                 <td class="c-num">${p.num && p.num !== "0" ? `#${esc(p.num)}` : ""}</td>
                 <td class="c-team" title="${esc(p.name)}"><span class="cell-id">${avatar(p.img, p.name)}${playerLink(p)}</span></td>
@@ -810,9 +852,9 @@ function statsView() {
     }
     let goalies = "";
     if (state.goalies?.length) {
-        goalies = `<div class="panel"><div class="panel-title">Gardiens</div><div class="table-scroll"><table class="standings stats">
-            <thead><tr><th class="c-team">Gardien</th><th title="Parties jouées">PJ</th><th title="Victoires">V</th><th title="Défaites">D</th><th title="Nulles">N</th>
-                <th title="Buts contre">BC</th><th title="Moyenne de buts alloués par partie">Moy</th><th title="Blanchissages">BL</th></tr></thead>
+        goalies = `<div class="panel"><div class="panel-title">${T("Gardiens", "Goalies")}</div><div class="table-scroll"><table class="standings stats">
+            <thead><tr><th class="c-team">${T("Gardien", "Goalie")}</th><th title="${T("Parties jouées", "Games played")}">${T("PJ", "GP")}</th><th title="${T("Victoires", "Wins")}">${T("V", "W")}</th><th title="${T("Défaites", "Losses")}">${T("D", "L")}</th><th title="${T("Nulles", "Ties")}">${T("N", "T")}</th>
+                <th title="${T("Buts contre", "Goals against")}">${T("BC", "GA")}</th><th title="${T("Moyenne de buts alloués par partie", "Goals-against average")}">${T("Moy", "GAA")}</th><th title="${T("Blanchissages", "Shutouts")}">${T("BL", "SO")}</th></tr></thead>
             <tbody>${state.goalies.map(g => `<tr>
                 <td class="c-team" title="${esc(g.name)}"><span class="cell-id">${avatar(g.img, g.name)}${playerLink(g)}</span></td>
                 <td>${g.pj}</td><td>${g.v}</td><td>${g.d}</td><td>${g.n}</td><td>${g.bc}</td><td>${dec(g.moy)}</td><td>${g.bl}</td>
@@ -820,34 +862,34 @@ function statsView() {
         </table></div></div>`;
     }
     return `<div class="stats-view">${excel}${teamStats()}${players}${goalies}
-        <div class="view-foot"><span>Statistiques officielles · touchez un joueur pour son historique</span>${link}</div></div>`;
+        <div class="view-foot"><span>${T("Statistiques officielles · touchez un joueur pour son historique", "Official stats · tap a player for their history")}</span>${link}</div></div>`;
 }
 
 // ---------- Suspensions ----------
 function suspItem(x, mine) {
     const active = isActiveSusp(x);
     const badge = active
-        ? `<span class="badge loss">${x.end ? `Jusqu'au ${esc(fmtDate.format(x.end))}` : x.games ? `${x.served}/${x.games} purgée${x.served > 1 ? "s" : ""}` : "En cours"}</span>`
-        : `<span class="badge win">Terminée</span>`;
-    const meta = [x.abbr, x.date ? fmtDate.format(x.date) : "", x.games ? `${x.games} partie${x.games > 1 ? "s" : ""}` : "", x.carried ? "Saison régulière" : ""].filter(Boolean).join(" · ");
+        ? `<span class="badge loss">${x.end ? `${T("Jusqu'au", "Until")} ${esc(fmtDate.format(x.end))}` : x.games ? `${x.served}/${x.games} ${T(`purgée${x.served > 1 ? "s" : ""}`, "served")}` : T("En cours", "Active")}</span>`
+        : `<span class="badge win">${T("Terminée", "Over")}</span>`;
+    const meta = [x.abbr, x.date ? fmtDate.format(x.date) : "", x.games ? plural(x.games, "partie", "game") : "", x.carried ? T("Saison régulière", "Regular season") : ""].filter(Boolean).join(" · ");
     return `<div class="susp${mine ? " is-r" : ""}${active ? "" : " done"}">
         ${avatar(x.img, x.name, "lg")}
         <div class="susp-main">
             <div class="susp-name">${x.id ? playerLink(x) : esc(x.name || "—")}</div>
             <div class="susp-meta">${esc(meta)}</div>
-            ${x.reason ? `<div class="susp-reason">${esc(x.reason)}</div>` : ""}
+            ${x.reason ? `<div class="susp-reason">${esc(penaltyText(x.reason))}</div>` : ""}
         </div>
         ${badge}
     </div>`;
 }
 
 function suspensionsView() {
-    const link = ext(`${SITE}/suspensions/`, "Site de la ligue");
+    const link = ext(`${SITE}/suspensions/`, LEAGUE_SITE());
     const lists = mySusp();
-    const body = !lists ? `<div class="notice error">Suspensions indisponibles pour le moment.</div>`
-        : (lists.mine.length ? lists.mine.map(x => suspItem(x, true)).join("") : `<div class="empty">Aucune suspension pour ${esc(myTeamName())}.</div>`)
-          + (lists.others.length ? `<details class="others"><summary>Autres équipes de la division (${lists.others.length})</summary>${lists.others.map(x => suspItem(x, false)).join("")}</details>` : "");
-    return `<div class="susp-group">${body}<div class="view-foot"><span>Suspensions officielles</span>${link}</div></div>`;
+    const body = !lists ? `<div class="notice error">${T("Suspensions indisponibles pour le moment.", "Suspensions unavailable right now.")}</div>`
+        : (lists.mine.length ? lists.mine.map(x => suspItem(x, true)).join("") : `<div class="empty">${T("Aucune suspension pour", "No suspensions for")} ${esc(myTeamName())}.</div>`)
+          + (lists.others.length ? `<details class="others"><summary>${T("Autres équipes de la division", "Other teams in the division")} (${lists.others.length})</summary>${lists.others.map(x => suspItem(x, false)).join("")}</details>` : "");
+    return `<div class="susp-group">${body}<div class="view-foot"><span>${T("Suspensions officielles", "Official suspensions")}</span>${link}</div></div>`;
 }
 
 // ---------- Team view ----------
@@ -857,7 +899,7 @@ function missingView() {
     const i = prev.findIndex(s => s.no === state.seasonNo);
     const before = i >= 0 ? prev[i + 1] : null;
     return `<div class="notice" style="margin-top:16px">
-        Cette équipe n'a pas joué en ${esc(seasonLabel(shownSeason()?.name || reg?.name || "cette saison"))}.<br>Choisissez une équipe ci-dessus${before ? ` ou revenez à la saison précédente.<br><button type="button" data-season="${esc(before.no)}">${esc(seasonLabel(before.name))}</button>` : "."}
+        ${T("Cette équipe n'a pas joué en", "This team did not play in")} ${esc(seasonLabel(shownSeason()?.name || reg?.name || T("cette saison", "this season")))}.<br>${T("Choisissez une équipe ci-dessus", "Choose a team above")}${before ? ` ${T("ou revenez à la saison précédente.", "or go back to the previous season.")}<br><button type="button" data-season="${esc(before.no)}">${esc(seasonLabel(before.name))}</button>` : "."}
     </div>`;
 }
 
@@ -866,8 +908,8 @@ function emptySeasonView() {
     const i = regs.findIndex(s => s.no === state.seasonNo);
     const before = i >= 0 ? regs[i + 1] : null;
     return `<div class="notice" style="margin-top:16px">
-        La saison commence bientôt : l'horaire n'est pas encore publié.
-        ${before ? `<br><button type="button" data-season="${esc(before.no)}">Voir ${esc(seasonLabel(before.name))}</button>` : ""}
+        ${T("La saison commence bientôt : l'horaire n'est pas encore publié.", "The season starts soon: the schedule isn't published yet.")}
+        ${before ? `<br><button type="button" data-season="${esc(before.no)}">${T("Voir", "See")} ${esc(seasonLabel(before.name))}</button>` : ""}
     </div>`;
 }
 
@@ -878,17 +920,17 @@ function renderTeam() {
         return;
     }
     if (state.error) {
-        view.innerHTML = `<div class="notice error" style="margin-top:16px">${esc(state.error)}<br><button type="button" data-action="retry">Réessayer</button></div>`;
+        view.innerHTML = `<div class="notice error" style="margin-top:16px">${esc(state.error)}<br><button type="button" data-action="retry">${T("Réessayer", "Try again")}</button></div>`;
         return;
     }
     if (state.missing) { view.innerHTML = missingView(); return; }
-    if (!state.teamNo) { view.innerHTML = `<div class="empty" style="margin-top:16px">Aucune équipe dans cette division.</div>`; return; }
+    if (!state.teamNo) { view.innerHTML = `<div class="empty" style="margin-top:16px">${T("Aucune équipe dans cette division.", "No teams in this division.")}</div>`; return; }
     if (!state.games.length) { view.innerHTML = teamHead() + emptySeasonView(); return; }
 
     const nSusp = (mySusp()?.mine || []).filter(isActiveSusp).length;
     const tab = (id, label) => `<button type="button" role="tab" data-view="${id}" aria-selected="${state.view === id}">${label}</button>`;
     const tabs = `<div class="seg view-tabs" role="tablist">
-        ${tab("games", "Horaire")}${tab("standings", "Classement")}${tab("stats", "Stats")}
+        ${tab("games", T("Horaire", "Schedule"))}${tab("standings", T("Classement", "Standings"))}${tab("stats", "Stats")}
         ${tab("susp", `Susp.${nSusp ? ` <span class="count alert">${nSusp}</span>` : ""}`)}
     </div>`;
     const body = state.view === "standings" ? standingsView()
@@ -898,16 +940,16 @@ function renderTeam() {
     view.innerHTML = nextGameCard() + teamHead() + tabs + body;
 }
 
-const fmtStamp = new Intl.DateTimeFormat("fr-CA", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+const fmtStamp = new Intl.DateTimeFormat(LOC, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 function renderControls() {
     const saved = SNAP?.fetchedAt ? new Date(SNAP.fetchedAt) : null;
     $("#notice").innerHTML = offline.used && !state.loading ? `<div class="stale">
-        <span>Site de la ligue injoignable : données enregistrées${saved && !isNaN(saved) ? ` le <b>${esc(fmtStamp.format(saved))}</b>` : ""}.</span>
-        <button type="button" class="btn ghost" data-action="retry">Réessayer</button>
+        <span>${T("Site de la ligue injoignable : données enregistrées", "League site unreachable: data saved")}${saved && !isNaN(saved) ? ` ${T("le", "on")} <b>${esc(fmtStamp.format(saved))}</b>` : ""}.</span>
+        <button type="button" class="btn ghost" data-action="retry">${T("Réessayer", "Try again")}</button>
     </div>` : "";
     const s = shownSeason();
-    $("#subtitle").textContent = [state.teamNo && !state.missing ? myTeamName() : "", s ? seasonLabel(s.name) : ""].filter(Boolean).join(" · ") || "Horaire et statistiques";
-    document.title = `${state.teamNo && !state.missing ? myTeamName() + " – " : ""}Dragons`;
+    $("#subtitle").textContent = [state.teamNo && !state.missing ? myTeamName() : "", s ? seasonLabel(s.name) : ""].filter(Boolean).join(" · ") || T("Horaire et statistiques", "Schedule and stats");
+    document.title = `${state.teamNo && !state.missing ? myTeamName() + " – " : ""}Dragons – ${T("Horaire et statistiques", "Schedule and stats")}`;
 }
 
 function renderAll() {
@@ -936,14 +978,14 @@ async function openOpponent(no) {
     const token = ++sheetToken;
     const s = shownSeasonNo();
     const name = state.standing?.find(r => r.no === no)?.name
-        || state.games.map(g => [g.home, g.away]).flat().find(t => t.no === no)?.name || "Adversaire";
+        || state.games.map(g => [g.home, g.away]).flat().find(t => t.no === no)?.name || T("Adversaire", "Opponent");
     openSheet(esc(name), skeletons(3, true));
     const [team, cal, pl] = await Promise.all([soft(Q.team(s, no)), soft(Q.calendar(s, no)), soft(Q.players(s, no))]);
     if (token !== sheetToken) return;
     const games = parseGames(cal);
     const players = parsePlayers(pl) || [];
     const played = games.filter(isPlayed).sort((a, b) => b.start - a.start);
-    const div = state.classes.find(c => c.scNo === String(team?.st_sc_no || ""))?.name || "";
+    const div = leagueText(state.classes.find(c => c.scNo === String(team?.st_sc_no || ""))?.name || "");
     const row = standRow(no);
     const colour = no === DRAGONS_NO ? DRAGONS_COLOUR : team ? teamColour(team.st_equip_color_1, team.st_equip_color_2) : "var(--border)";
 
@@ -971,29 +1013,29 @@ async function openOpponent(no) {
             ${teamMark(brand({ no, name, abbr: team?.st_equip_abbr, colour, logo: logoUrl(team?.st_equip_img) }), "xl")}
             <div>
                 <div class="opp-sub">${esc([div, shownSeason()?.name ? seasonLabel(shownSeason().name) : ""].filter(Boolean).join(" · "))}</div>
-                <div class="record big"><span class="w">${row && seasonStarted() ? row.v : rec.win} V</span><span class="l">${row && seasonStarted() ? row.losses : rec.loss} D</span><span class="t">${row && seasonStarted() ? row.n : rec.tie} N</span></div>
-                <div class="opp-sub">${row?.rank && seasonStarted() ? `${ordinal(row.rank)} de la division · ${row.pts} pts · ` : ""}${rec.bp} BP · ${rec.bc} BC${row && seasonStarted() ? "" : " · compté à partir de leurs matchs"}</div>
+                <div class="record big"><span class="w">${row && seasonStarted() ? row.v : rec.win} ${T("V", "W")}</span><span class="l">${row && seasonStarted() ? row.losses : rec.loss} ${T("D", "L")}</span><span class="t">${row && seasonStarted() ? row.n : rec.tie} ${T("N", "T")}</span></div>
+                <div class="opp-sub">${row?.rank && seasonStarted() ? `${ordinal(row.rank)} ${T("de la division", "in the division")} · ${row.pts} pts · ` : ""}${rec.bp} ${T("BP", "GF")} · ${rec.bc} ${T("BC", "GA")}${row && seasonStarted() ? "" : T(" · compté à partir de leurs matchs", " · counted from their games")}</div>
             </div>
         </div>
-        <h4>Prochain match contre eux</h4>
+        <h4>${T("Prochain match contre eux", "Next time we play them")}</h4>
         ${nextVs ? `<div class="next-vs">
             <div class="next-vs-top"><b>${esc(cap(fmtDayLong.format(nextVs.start)))}${nextVs.hasTime ? ` · ${esc(fmtTime.format(nextVs.start))}` : ""}</b><span class="badge ${isLive(nextVs) ? "live" : "duel"}">${esc(countdown(nextVs))}</span></div>
-            <div class="next-vs-sub">${esc(myTeamName())} ${nextVs.home.no === state.teamNo ? "reçoit" : "visite"} ${esc(name)} · ${esc(surfaceLabel(nextVs.surface))}${nextVs.no ? ` · #${esc(nextVs.no)}` : ""}</div>
-            ${laterVs.length ? `<div class="next-vs-more">Ensuite : ${laterVs.map(g => esc(fmtDayShort.format(g.start))).join(", ")}</div>` : ""}
-        </div>` : `<div class="hint">Aucun autre match prévu contre eux cette saison.</div>`}
-        ${formStrip(games, no) ? `<h4>5 derniers matchs</h4><div class="form big">${formStrip(games, no).replace(/^<span[^>]*>|<\/span>$/g, "")}</div>` : ""}
-        <h4>Face à face${h2h.length ? ` · ${esc(myTeamName())} ${h2hRec.win}-${h2hRec.loss}-${h2hRec.tie}` : ""}</h4>
-        ${h2h.length ? `<div class="mini-list">${h2h.map(g => miniGame(g, state.teamNo)).join("")}</div>` : `<div class="hint">Aucun match joué entre les deux équipes cette saison.</div>`}
-        ${common.length ? `<h4>Adversaires communs</h4><table class="standings mini"><thead><tr><th class="c-team">Adversaire</th><th>${esc(myTeamName())}</th><th>${esc(name)}</th></tr></thead><tbody>
+            <div class="next-vs-sub">${esc(myTeamName())} ${nextVs.home.no === state.teamNo ? T("reçoit", "hosts") : T("visite", "visits")} ${esc(name)} · ${esc(surfaceLabel(nextVs.surface))}${nextVs.no ? ` · #${esc(nextVs.no)}` : ""}</div>
+            ${laterVs.length ? `<div class="next-vs-more">${T("Ensuite :", "After that:")} ${laterVs.map(g => esc(fmtDayShort.format(g.start))).join(", ")}</div>` : ""}
+        </div>` : `<div class="hint">${T("Aucun autre match prévu contre eux cette saison.", "No other game against them this season.")}</div>`}
+        ${formStrip(games, no) ? `<h4>${T("5 derniers matchs", "Last 5 games")}</h4><div class="form big">${formStrip(games, no).replace(/^<span[^>]*>|<\/span>$/g, "")}</div>` : ""}
+        <h4>${T("Face à face", "Head to head")}${h2h.length ? ` · ${esc(myTeamName())} ${h2hRec.win}-${h2hRec.loss}-${h2hRec.tie}` : ""}</h4>
+        ${h2h.length ? `<div class="mini-list">${h2h.map(g => miniGame(g, state.teamNo)).join("")}</div>` : `<div class="hint">${T("Aucun match joué entre les deux équipes cette saison.", "The two teams have not played each other this season.")}</div>`}
+        ${common.length ? `<h4>${T("Adversaires communs", "Common opponents")}</h4><table class="standings mini"><thead><tr><th class="c-team">${T("Adversaire", "Opponent")}</th><th>${esc(myTeamName())}</th><th>${esc(name)}</th></tr></thead><tbody>
             ${common.map(k => `<tr><td class="c-team">${esc(oppOf(mine.get(k)[0], state.teamNo).name)}</td><td><span class="form">${resText(mine.get(k), state.teamNo)}</span></td><td><span class="form">${resText(theirs.get(k), no)}</span></td></tr>`).join("")}
         </tbody></table>` : ""}
-        <h4>Meilleurs pointeurs</h4>
-        ${top.length ? `<table class="standings mini"><thead><tr><th class="c-num">#</th><th class="c-team">Joueur</th><th>PJ</th><th>B</th><th>A</th><th class="c-pts">Pts</th></tr></thead><tbody>
+        <h4>${T("Meilleurs pointeurs", "Top scorers")}</h4>
+        ${top.length ? `<table class="standings mini"><thead><tr><th class="c-num">#</th><th class="c-team">${T("Joueur", "Player")}</th><th>${T("PJ", "GP")}</th><th>${T("B", "G")}</th><th>A</th><th class="c-pts">Pts</th></tr></thead><tbody>
             ${top.map(p => `<tr><td class="c-num">${p.num && p.num !== "0" ? `#${esc(p.num)}` : ""}</td><td class="c-team"><span class="cell-id">${avatar(p.img, p.name)}${playerLink(p)}</span></td><td>${p.pj}</td><td>${p.b}</td><td>${p.a}</td><td class="c-pts">${p.pts}</td></tr>`).join("")}
-        </tbody></table>` : `<div class="hint">Aucune statistique pour l'instant.</div>`}
-        <h4>Tous leurs résultats (${played.length})</h4>
-        ${played.length ? `<div class="mini-list">${played.map(g => miniGame(g, no)).join("")}</div>` : `<div class="hint">Aucun match joué.</div>`}
-        <div class="view-foot">${ext(`${SITE}/equipes/?seasonNo=${encodeURIComponent(s)}&teamNo=${encodeURIComponent(no)}`, "Fiche sur le site de la ligue")}</div>`;
+        </tbody></table>` : `<div class="hint">${T("Aucune statistique pour l'instant.", "No stats yet.")}</div>`}
+        <h4>${T("Tous leurs résultats", "All their results")} (${played.length})</h4>
+        ${played.length ? `<div class="mini-list">${played.map(g => miniGame(g, no)).join("")}</div>` : `<div class="hint">${T("Aucun match joué.", "No games played.")}</div>`}
+        <div class="view-foot">${ext(`${SITE}/equipes/?seasonNo=${encodeURIComponent(s)}&teamNo=${encodeURIComponent(no)}`, T("Fiche sur le site de la ligue", "Team page on the league website"))}</div>`;
     openSheet(esc(team?.st_equip_name || name), html);
 }
 
@@ -1002,7 +1044,7 @@ function miniGame(g, teamNo) {
     return `<div class="mini-game">
         <span class="mini-date">${esc(fmtDayShort.format(g.start))}</span>
         ${teamMark(opp, "sm")}<span class="mini-opp">${home ? "vs" : "@"} ${esc(opp.name)}</span>
-        ${r ? `<span class="badge ${r}">${RESULT_LABEL[r][0]} ${esc(scoreFor(g, teamNo))}${g.shootout ? " FU" : ""}</span>` : `<span class="badge">${g.score && isFinal(g) ? esc(scoreFor(g, teamNo)) : "—"}</span>`}
+        ${r ? `<span class="badge ${r}">${RESULT_LABEL[r][0]} ${esc(scoreFor(g, teamNo))}${g.shootout ? T(" FU", " SO") : ""}</span>` : `<span class="badge">${g.score && isFinal(g) ? esc(scoreFor(g, teamNo)) : "—"}</span>`}
     </div>`;
 }
 
@@ -1016,8 +1058,9 @@ const clock = (t) => String(t || "").trim().replace(/^0:/, "").replace(/^0(\d:)/
 const secs = (t) => clock(t).split(":").reduce((a, x) => a * 60 + int(x), 0);
 function periodName(text, i) {
     const n = norm(text);
-    if (/PROL/.test(n)) return { short: "Prol.", long: "Prolongation" };
+    if (/PROL/.test(n)) return EN ? { short: "OT", long: "Overtime" } : { short: "Prol.", long: "Prolongation" };
     const d = n.match(/^(\d+)/)?.[1] || String(i + 1);
+    if (EN) { const o = ordinal(int(d)); return { short: o, long: `${o} period` }; }
     return { short: d === "1" ? "1re" : `${d}e`, long: `${d === "1" ? "1re" : `${d}e`} période` };
 }
 const tablesOf = (x) => (Array.isArray(x) ? x : []).filter(t => t && typeof t === "object");
@@ -1088,12 +1131,12 @@ function parseSummary(board, stats, goalsAns, pensAns) {
 
 async function openSummary(gameNo) {
     const token = ++sheetToken;
-    openSheet("Sommaire du match", skeletons(3, true));
+    openSheet(T("Sommaire du match", "Game summary"), skeletons(3, true));
     const g = state.games.find(x => x.no === gameNo);
     const fresh = g ? isLive(g) : false;
     const [board, stats, goals, pens] = await Promise.all([soft(Q.board(gameNo, fresh)), soft(Q.gameStats(gameNo, fresh)), soft(Q.goals(gameNo, fresh)), soft(Q.penalties(gameNo, fresh))]);
     if (token !== sheetToken) return;
-    if (!board || !board.gameNo) { openSheet("Sommaire du match", `<div class="notice error" style="margin-top:16px">Sommaire indisponible pour le moment.</div>`); return; }
+    if (!board || !board.gameNo) { openSheet(T("Sommaire du match", "Game summary"), `<div class="notice error" style="margin-top:16px">${T("Sommaire indisponible pour le moment.", "Summary not available right now.")}</div>`); return; }
     const s = parseSummary(board, stats, goals, pens);
     const A = s.away, H = s.home;
     const sideOf = (home) => home ? H : A;
@@ -1102,13 +1145,13 @@ async function openSummary(gameNo) {
 
     // Head: both teams, logos and final score
     const head = `<div class="sum-head">
-        <div class="sum-team">${teamMark(A, "xl")}<b>${A.no && A.no !== state.teamNo ? teamLink(A) : esc(A.name)}</b><small>Visiteur${A.fiche ? ` · ${esc(A.fiche)}` : ""}</small></div>
+        <div class="sum-team">${teamMark(A, "xl")}<b>${A.no && A.no !== state.teamNo ? teamLink(A) : esc(A.name)}</b><small>${T("Visiteur", "Visitor")}${A.fiche ? ` · ${esc(A.fiche)}` : ""}</small></div>
         <div class="sum-score"><span>${A.score}</span><i>–</i><span>${H.score}</span>
-            <small>${s.status === "FORFAIT" ? "Forfait" : s.shootout ? "Fusillade" : s.status === "END" ? "Final" : s.status ? "En cours" : ""}</small>
+            <small>${s.status === "FORFAIT" ? T("Forfait", "Forfeit") : s.shootout ? T("Fusillade", "Shootout") : s.status === "END" ? "Final" : s.status ? T("En cours", "In progress") : ""}</small>
             ${res ? `<span class="badge ${res}">${RESULT_LABEL[res]}</span>` : ""}</div>
-        <div class="sum-team">${teamMark(H, "xl")}<b>${H.no && H.no !== state.teamNo ? teamLink(H) : esc(H.name)}</b><small>Local${H.fiche ? ` · ${esc(H.fiche)}` : ""}</small></div>
+        <div class="sum-team">${teamMark(H, "xl")}<b>${H.no && H.no !== state.teamNo ? teamLink(H) : esc(H.name)}</b><small>${T("Local", "Home")}${H.fiche ? ` · ${esc(H.fiche)}` : ""}</small></div>
     </div>
-    <div class="sum-meta">${esc([s.start ? cap(fmtDayLong.format(s.start)) : "", s.start ? fmtTime.format(s.start) : "", s.className].filter(Boolean).join(" · "))} · <a class="ext" target="_blank" rel="noopener" href="${esc(`${SITE}/sommaire/?gameNo=${encodeURIComponent(gameNo)}`)}" title="Sommaire sur le site de la ligue">#${esc(gameNo)} ↗</a></div>`;
+    <div class="sum-meta">${esc([s.start ? cap(fmtDayLong.format(s.start)) : "", s.start ? fmtTime.format(s.start) : "", s.className].filter(Boolean).join(" · "))} · <a class="ext" target="_blank" rel="noopener" href="${esc(`${SITE}/sommaire/?gameNo=${encodeURIComponent(gameNo)}`)}" title="${T("Sommaire sur le site de la ligue", "Summary on the league website")}">#${esc(gameNo)} ↗</a></div>`;
 
     // Score by period (+ shootout)
     const pcols = s.periods.map(p => p.short);
@@ -1118,11 +1161,11 @@ async function openSummary(gameNo) {
         ${s.shootout ? `<td>${soWin === (home ? "home" : "away") ? 1 : 0}</td>` : ""}
         <td class="c-pts">${t.score}</td></tr>`;
     const board_ = `<div class="panel tight"><div class="table-scroll"><table class="standings scoreboard">
-        <thead><tr><th class="c-team">Équipe</th>${pcols.map(p => `<th>${esc(p)}</th>`).join("")}${s.shootout ? `<th title="Fusillade">TB</th>` : ""}<th class="c-pts">T</th></tr></thead>
+        <thead><tr><th class="c-team">${T("Équipe", "Team")}</th>${pcols.map(p => `<th>${esc(p)}</th>`).join("")}${s.shootout ? `<th title="${T("Fusillade", "Shootout")}">${T("TB", "SO")}</th>` : ""}<th class="c-pts">T</th></tr></thead>
         <tbody>${line(A, false)}${line(H, true)}</tbody></table></div></div>`;
 
     // Official statistics, visitor on the left and home team on the right (same four boxes as the Spordle pages)
-    const pct = (a, b) => b ? `${(100 * a / b).toFixed(1).replace(".", ",").replace(/,0$/, "")} %` : "–";
+    const pct = pctText;
     const val = (v) => v ?? "–";
     const pk = (t, o) => o.stats?.ppo != null && o.stats?.ppg != null ? { k: o.stats.ppo - o.stats.ppg, n: o.stats.ppo } : null;
     const pkA = pk(A, H), pkH = pk(H, A);
@@ -1130,12 +1173,12 @@ async function openSummary(gameNo) {
     // Game-winning goal: team logo, number and name of the scorer
     const gwgBox = () => {
         let body;
-        if (s.shootout) body = `${teamMark(soTeam, "sm")}<span class="gwg-who"><b>Fusillade</b><small>Tireur non inscrit</small></span>`;
+        if (s.shootout) body = `${teamMark(soTeam, "sm")}<span class="gwg-who"><b>${T("Fusillade", "Shootout")}</b><small>${T("Tireur non inscrit", "Shooter not entered")}</small></span>`;
         else if (s.gwg) {
             const t = sideOf(s.gwg.home), p = s.gwg.scorer;
             body = `${teamMark(t, "sm")}<span class="gwg-who"><b>${p ? pname(p) : esc(t.name)}</b><small>${esc(s.periods.find(x => x.short === s.gwg.p)?.long || s.gwg.p)} · ${esc(s.gwg.t)}</small></span>`;
-        } else body = `<span class="gwg-who"><b>${A.score === H.score && (s.status === "END") ? "Match nul" : "–"}</b></span>`;
-        return `<div class="gs-box"><div class="gs-label">But gagnant</div><div class="gwg">${body}</div></div>`;
+        } else body = `<span class="gwg-who"><b>${A.score === H.score && (s.status === "END") ? T("Match nul", "Tie game") : "–"}</b></span>`;
+        return `<div class="gs-box"><div class="gs-label">${T("But gagnant", "Game-winning goal")}</div><div class="gwg">${body}</div></div>`;
     };
     const nPen = (home) => s.pens.filter(x => x.home === home).length;
     const box = (label, a, h, aSub = "", hSub = "") => `<div class="gs-box">
@@ -1145,16 +1188,16 @@ async function openSummary(gameNo) {
             <div class="gs-side home"><span><b>${h}</b>${hSub ? `<small>${hSub}</small>` : ""}</span>${teamMark(H, "sm")}</div>
         </div>
     </div>`;
-    const boxes = A.stats && H.stats ? `<h4>Statistiques du match</h4><div class="gs-grid">
-        ${box("Avantage num.", `${val(A.stats.ppg)}/${val(A.stats.ppo)}`, `${val(H.stats.ppg)}/${val(H.stats.ppo)}`, pct(A.stats.ppg, A.stats.ppo), pct(H.stats.ppg, H.stats.ppo))}
-        ${box("Désavantage num.", pkA ? `${pkA.k}/${pkA.n}` : "–", pkH ? `${pkH.k}/${pkH.n}` : "–", pkA ? pct(pkA.k, pkA.n) : "", pkH ? pct(pkH.k, pkH.n) : "")}
-        ${box("Minutes de punition", A.stats.pim, H.stats.pim, `${nPen(false)} pun.`, `${nPen(true)} pun.`)}
+    const boxes = A.stats && H.stats ? `<h4>${T("Statistiques du match", "Game stats")}</h4><div class="gs-grid">
+        ${box(T("Avantage num.", "Power play"), `${val(A.stats.ppg)}/${val(A.stats.ppo)}`, `${val(H.stats.ppg)}/${val(H.stats.ppo)}`, pct(A.stats.ppg, A.stats.ppo), pct(H.stats.ppg, H.stats.ppo))}
+        ${box(T("Désavantage num.", "Penalty kill"), pkA ? `${pkA.k}/${pkA.n}` : "–", pkH ? `${pkH.k}/${pkH.n}` : "–", pkA ? pct(pkA.k, pkA.n) : "", pkH ? pct(pkH.k, pkH.n) : "")}
+        ${box(T("Minutes de punition", "Penalty minutes"), A.stats.pim, H.stats.pim, `${nPen(false)} ${T("pun.", "pen.")}`, `${nPen(true)} ${T("pun.", "pen.")}`)}
         ${gwgBox()}
     </div>` : "";
 
     // Goals and penalties by period, in game-clock order, with the player's photo
     const byPeriod = (list, render) => {
-        if (!list.length) return `<div class="empty">Aucun.</div>`;
+        if (!list.length) return `<div class="empty">${T("Aucun.", "None.")}</div>`;
         return s.periods.filter(p => list.some(x => x.p === p.short)).map(p =>
             `<p class="sum-period">${esc(p.long)}</p><div class="sum-list">${list.filter(x => x.p === p.short).sort((a, b) => secs(a.t) - secs(b.t)).map(render).join("")}</div>`).join("");
     };
@@ -1162,8 +1205,8 @@ async function openSummary(gameNo) {
         const t = sideOf(x.home);
         return `<div class="sum-item${t.no === state.teamNo ? " mine" : ""}">
             <span class="d">${esc(x.t)}</span>${teamMark(t, "sm")}${avatar(x.img, x.scorer?.name)}
-            <span class="o"><span class="who">${x.scorer ? pname(x.scorer) : `But — ${esc(t.name)}`}${x.scorer?.n ? ` <span class="sum-as">(${esc(x.scorer.n)})</span>` : ""}${x.sit ? ` <span class="flag">${esc(x.sit)}</span>` : ""}</span>
-                <span class="sum-as">${x.assists.length ? `Passes : ${x.assists.map(pname).join(", ")}` : "Sans passe"}</span></span>
+            <span class="o"><span class="who">${x.scorer ? pname(x.scorer) : `${T("But", "Goal")} — ${esc(t.name)}`}${x.scorer?.n ? ` <span class="sum-as">(${esc(x.scorer.n)})</span>` : ""}${x.sit ? ` <span class="flag">${esc(x.sit)}</span>` : ""}</span>
+                <span class="sum-as">${x.assists.length ? `${T("Passes :", "Assists:")} ${x.assists.map(pname).join(", ")}` : T("Sans passe", "Unassisted")}</span></span>
             <span class="sum-run">${x.score.a}-${x.score.h}</span>
         </div>`;
     };
@@ -1171,79 +1214,79 @@ async function openSummary(gameNo) {
         const t = sideOf(x.home);
         return `<div class="sum-item${t.no === state.teamNo ? " mine" : ""}">
             <span class="d">${esc(x.t)}</span>${teamMark(t, "sm")}${avatar(x.img, x.name || t.name)}
-            <span class="o"><span class="who">${x.name ? pname(x) : "Punition de banc"}</span><span class="sum-as">${esc(x.what || "Punition")}</span></span>
-            <span class="sum-run">${x.min != null ? `${String(x.min).replace(".", ",")} min` : ""}</span>
+            <span class="o"><span class="who">${x.name ? pname(x) : T("Punition de banc", "Bench penalty")}</span><span class="sum-as">${esc(penaltyText(x.what) || T("Punition", "Penalty"))}</span></span>
+            <span class="sum-run">${x.min != null ? `${EN ? x.min : String(x.min).replace(".", ",")} min` : ""}</span>
         </div>`;
     };
-    const so = s.shootout && !s.so.length ? `<h4>Fusillade</h4><div class="sum-list"><div class="sum-item${soTeam.no === state.teamNo ? " mine" : ""}"><span class="d">TB</span>${teamMark(soTeam, "sm")}
-            <span class="o"><span class="who">${esc(soTeam.name)} gagne en fusillade</span><span class="sum-as">Tireurs non inscrits à la feuille de match</span></span>
+    const so = s.shootout && !s.so.length ? `<h4>${T("Fusillade", "Shootout")}</h4><div class="sum-list"><div class="sum-item${soTeam.no === state.teamNo ? " mine" : ""}"><span class="d">${T("TB", "SO")}</span>${teamMark(soTeam, "sm")}
+            <span class="o"><span class="who">${esc(soTeam.name)} ${T("gagne en fusillade", "wins in a shootout")}</span><span class="sum-as">${T("Tireurs non inscrits à la feuille de match", "Shooters not entered on the game sheet")}</span></span>
             <span class="sum-run">${A.score}-${H.score}</span></div></div>`
-        : s.so.length ? `<h4>Fusillade</h4><div class="sum-list">${s.so.sort((a, b) => a.n - b.n).map(x => {
+        : s.so.length ? `<h4>${T("Fusillade", "Shootout")}</h4><div class="sum-list">${s.so.sort((a, b) => a.n - b.n).map(x => {
         const t = norm(x.abbr) === norm(H.abbr) ? H : A;
         return `<div class="sum-item${t.no === state.teamNo ? " mine" : ""}"><span class="d">${x.n}</span>${teamMark(t, "sm")}<span class="o"><span class="who">${pname(x)}</span></span>
-            <span class="sum-run ${x.scored ? "yes" : "no"}">${x.scored ? "✓ But" : "✗ Raté"}</span></div>`;
+            <span class="sum-run ${x.scored ? "yes" : "no"}">${x.scored ? T("✓ But", "✓ Goal") : T("✗ Raté", "✗ Miss")}</span></div>`;
     }).join("")}</div>` : "";
 
     const html = head
-        + (s.status === "FORFAIT" ? `<div class="notice" style="margin-top:12px">Match gagné par forfait.</div>` : "")
-        + `<h4>Pointage</h4>${board_}${boxes}
-        <h4><span>Buts</span> <span class="count-tag">${s.goals.length}</span></h4>${byPeriod(s.goals, goalItem)}
+        + (s.status === "FORFAIT" ? `<div class="notice" style="margin-top:12px">${T("Match gagné par forfait.", "Game won by forfeit.")}</div>` : "")
+        + `<h4>${T("Pointage", "Score")}</h4>${board_}${boxes}
+        <h4><span>${T("Buts", "Goals")}</span> <span class="count-tag">${s.goals.length}</span></h4>${byPeriod(s.goals, goalItem)}
         ${so}
-        <h4><span>Punitions</span> <span class="count-tag">${s.pens.length}</span></h4>${byPeriod(s.pens, penItem)}
-        <div class="view-foot"><span>Pointage courant à droite (visiteur-local) · (n) = buts de la saison · AN = avantage numérique</span></div>`;
-    openSheet("Sommaire du match", html);
+        <h4><span>${T("Punitions", "Penalties")}</span> <span class="count-tag">${s.pens.length}</span></h4>${byPeriod(s.pens, penItem)}
+        <div class="view-foot"><span>${T("Pointage courant à droite (visiteur-local) · (n) = buts de la saison · AN = avantage numérique", "Running score on the right (visitor-home) · (n) = season goals · AN = power play, DN = shorthanded")}</span></div>`;
+    openSheet(T("Sommaire du match", "Game summary"), html);
 }
 
 // Player history: stats season by season, across every team the player has played for
 async function openPlayer(id) {
     const token = ++sheetToken;
-    openSheet("Joueur", skeletons(3, true));
+    openSheet(T("Joueur", "Player"), skeletons(3, true));
     const info = await soft(Q.playerInfo(id));
     if (token !== sheetToken) return;
-    if (!info || info.error) { openSheet("Joueur", `<div class="notice error">Fiche du joueur indisponible.</div>`); return; }
+    if (!info || info.error) { openSheet(T("Joueur", "Player"), `<div class="notice error">${T("Fiche du joueur indisponible.", "Player page not available.")}</div>`); return; }
     const goalie = !!info.isGoalie || !!info.isGoalieAndForward, skater = !!info.isForward || !!info.isGoalieAndForward || !goalie;
     const [cs, cg] = await Promise.all([skater ? soft(Q.career(id, false)) : null, goalie ? soft(Q.career(id, true)) : null]);
     if (token !== sheetToken) return;
     const sk = parseCareer(cs, false), gk = parseCareer(cg, true);
 
-    const seasonCell = (r) => `<td class="c-team"><div class="cs-season">${esc(seasonLabel(r.season, true))}${r.series ? ` <span class="tag">Séries</span>` : ""}</div>
-        <div class="cs-team">${r.teamNo ? `<button type="button" class="link-btn" data-goto-team="${esc(r.teamNo)}" data-goto-season="${esc(r.seasonNo)}">${esc(r.team)}</button>` : esc(r.team)}${r.div ? ` · ${esc(r.div)}` : ""}</div></td>`;
+    const seasonCell = (r) => `<td class="c-team"><div class="cs-season">${esc(seasonLabel(r.season, true))}${r.series ? ` <span class="tag">${T("Séries", "Playoffs")}</span>` : ""}</div>
+        <div class="cs-team">${r.teamNo ? `<button type="button" class="link-btn" data-goto-team="${esc(r.teamNo)}" data-goto-season="${esc(r.seasonNo)}">${esc(r.team)}</button>` : esc(r.team)}${r.div ? ` · ${esc(leagueText(r.div))}` : ""}</div></td>`;
     const sum = (list, k) => list.reduce((t, r) => t + (r[k] || 0), 0);
 
     let html = `<div class="opp-head">
         ${avatar(info.sp_play_img, info.sp_player_name, "xl")}
         <div>
-            <div class="opp-sub">${esc(info.pos_abbr === "ATT" ? "Attaquant" : info.pos_abbr === "DEF" ? "Défenseur" : goalie && !skater ? "Gardien" : "")}</div>
-            <div class="opp-sub">Équipe actuelle : <b>${esc(info.st_equip_name || "—")}</b></div>
+            <div class="opp-sub">${esc(info.pos_abbr === "ATT" ? T("Attaquant", "Forward") : info.pos_abbr === "DEF" ? T("Défenseur", "Defence") : goalie && !skater ? T("Gardien", "Goalie") : "")}</div>
+            <div class="opp-sub">${T("Équipe actuelle :", "Current team:")} <b>${esc(info.st_equip_name || "—")}</b></div>
         </div>
     </div>`;
     if (sk.length) {
         const reg = sk.filter(r => !r.series), ser = sk.filter(r => r.series);
         const nSeasons = new Set(reg.map(r => r.seasonNo)).size, nTeams = new Set(sk.map(r => norm(r.team))).size;
-        html += `<h4>Joueur · ${nSeasons} saison${nSeasons > 1 ? "s" : ""} · ${nTeams} équipe${nTeams > 1 ? "s" : ""}</h4>
-        <div class="table-scroll"><table class="standings mini career"><thead><tr><th class="c-team">Saison · équipe</th><th>PJ</th><th>B</th><th>A</th><th class="c-pts">Pts</th><th>Pun</th></tr></thead><tbody>
+        html += `<h4>${T("Joueur", "Player")} · ${plural(nSeasons, "saison", "season")} · ${plural(nTeams, "équipe", "team")}</h4>
+        <div class="table-scroll"><table class="standings mini career"><thead><tr><th class="c-team">${T("Saison · équipe", "Season · team")}</th><th>${T("PJ", "GP")}</th><th>${T("B", "G")}</th><th>A</th><th class="c-pts">Pts</th><th>${T("Pun", "PIM")}</th></tr></thead><tbody>
             ${sk.map(r => `<tr class="${r.teamNo === state.teamNo ? "me" : ""}">${seasonCell(r)}<td>${r.pj}</td><td>${r.b}</td><td>${r.a}</td><td class="c-pts">${r.pts}</td><td>${r.pun}</td></tr>`).join("")}
         </tbody><tfoot>
-            <tr><td class="c-team">Total saisons</td><td>${sum(reg, "pj")}</td><td>${sum(reg, "b")}</td><td>${sum(reg, "a")}</td><td class="c-pts">${sum(reg, "pts")}</td><td>${sum(reg, "pun")}</td></tr>
-            ${ser.length ? `<tr><td class="c-team">Total séries</td><td>${sum(ser, "pj")}</td><td>${sum(ser, "b")}</td><td>${sum(ser, "a")}</td><td class="c-pts">${sum(ser, "pts")}</td><td>${sum(ser, "pun")}</td></tr>` : ""}
+            <tr><td class="c-team">${T("Total saisons", "Seasons total")}</td><td>${sum(reg, "pj")}</td><td>${sum(reg, "b")}</td><td>${sum(reg, "a")}</td><td class="c-pts">${sum(reg, "pts")}</td><td>${sum(reg, "pun")}</td></tr>
+            ${ser.length ? `<tr><td class="c-team">${T("Total séries", "Playoffs total")}</td><td>${sum(ser, "pj")}</td><td>${sum(ser, "b")}</td><td>${sum(ser, "a")}</td><td class="c-pts">${sum(ser, "pts")}</td><td>${sum(ser, "pun")}</td></tr>` : ""}
         </tfoot></table></div>`;
     }
     if (gk.length) {
-        html += `<h4>Gardien</h4>
-        <div class="table-scroll"><table class="standings mini career"><thead><tr><th class="c-team">Saison · équipe</th><th>PJ</th><th>V</th><th>D</th><th>N</th><th>BC</th><th>Moy</th></tr></thead><tbody>
+        html += `<h4>${T("Gardien", "Goalie")}</h4>
+        <div class="table-scroll"><table class="standings mini career"><thead><tr><th class="c-team">${T("Saison · équipe", "Season · team")}</th><th>${T("PJ", "GP")}</th><th>${T("V", "W")}</th><th>${T("D", "L")}</th><th>${T("N", "T")}</th><th>${T("BC", "GA")}</th><th>${T("Moy", "GAA")}</th></tr></thead><tbody>
             ${gk.map(r => `<tr class="${r.teamNo === state.teamNo ? "me" : ""}">${seasonCell(r)}<td>${r.pj}</td><td>${r.v}</td><td>${r.d}</td><td>${r.n}</td><td>${r.bc}</td><td>${dec(r.moy)}</td></tr>`).join("")}
         </tbody></table></div>`;
     }
-    if (!sk.length && !gk.length) html += `<div class="hint">Aucune statistique enregistrée.</div>`;
-    html += `<div class="view-foot"><span>Pun = minutes de punition</span>${ext(`${SITE}/liste-des-joueurs/`, "Site de la ligue")}</div>`;
-    openSheet(esc(info.sp_player_name || "Joueur"), html);
+    if (!sk.length && !gk.length) html += `<div class="hint">${T("Aucune statistique enregistrée.", "No stats recorded.")}</div>`;
+    html += `<div class="view-foot"><span>${T("Pun = minutes de punition", "PIM = penalty minutes")}</span>${ext(`${SITE}/liste-des-joueurs/`, LEAGUE_SITE())}</div>`;
+    openSheet(esc(info.sp_player_name || T("Joueur", "Player")), html);
 }
 
 // ---------- Calendar export (.ics) ----------
 function icsDate(d) { return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, ""); }
 function icsText(s) { return String(s).replace(/[\\;,]/g, m => "\\" + m).replace(/\n/g, "\\n"); }
 function downloadICS() {
-    const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Dragons//Horaire//FR", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+    const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", `PRODID:-//Dragons//Horaire//${LANG.toUpperCase()}`, "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
         `X-WR-CALNAME:${icsText(`${myTeamName()} – LHAI St-Constant`)}`];
     const stamp = icsDate(new Date());
     state.games.slice().sort((a, b) => a.start - b.start).forEach(g => {
@@ -1254,13 +1297,13 @@ function downloadICS() {
             `DTSTART:${icsDate(g.start)}`, `DTEND:${icsDate(end)}`,
             `SUMMARY:${icsText(`${home ? "vs" : "@"} ${opp.name}${score}`)}`,
             `LOCATION:${icsText(surfaceLabel(g.surface))}`,
-            `DESCRIPTION:${icsText(`Partie #${g.no} · ${home ? "Local" : "Visiteur"}`)}`,
+            `DESCRIPTION:${icsText(`${T("Partie", "Game")} #${g.no} · ${home ? T("Local", "Home") : T("Visiteur", "Away")}`)}`,
             "END:VEVENT");
     });
     lines.push("END:VCALENDAR");
-    saveFile(new Blob([lines.join("\r\n")], { type: "text/calendar" }), `horaire-${slug(myTeamName())}-${slug(shownSeason()?.name || "")}.ics`);
+    saveFile(new Blob([lines.join("\r\n")], { type: "text/calendar" }), `${T("horaire", "schedule")}-${slug(myTeamName())}-${slug(seasonLabel(shownSeason()?.name || ""))}.ics`);
     const hint = $("#icsHint");
-    if (hint) { hint.textContent = "⬅ Téléchargé!"; hint.classList.add("done"); setTimeout(() => { if (hint.isConnected) { hint.textContent = "⬅ Ajouter à mon calendrier"; hint.classList.remove("done"); } }, 5000); }
+    if (hint) { hint.textContent = T("⬅ Téléchargé!", "⬅ Downloaded!"); hint.classList.add("done"); setTimeout(() => { if (hint.isConnected) { hint.textContent = T("⬅ Ajouter à mon calendrier", "⬅ Add to my calendar"); hint.classList.remove("done"); } }, 5000); }
 }
 const slug = (s) => norm(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 function saveFile(blob, name) {
@@ -1340,25 +1383,27 @@ const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 async function downloadXLSX() {
     const row = standRow(state.teamNo), me = state.teamNo;
     const ts = seasonTeamStats();
-    const equipe = [["Équipe", "Division", "Saison", "Rang", "PJ", "V", "D", "DP", "N", "Pts", "BP", "BC", "Diff", "BAN", "Occasions AN", "DN réussis", "Occasions DN", "Pun (min)"],
-        [myTeamName(), currentClass()?.name || "", shownSeason()?.name || "", row?.rank || "", row?.pj ?? "", row?.v ?? "", row ? row.dr + row.df : "", row?.dp ?? "", row?.n ?? "", row?.pts ?? "", row?.bp ?? "", row?.bc ?? "", row?.diff ?? "",
+    const equipe = [EN ? ["Team", "Division", "Season", "Rank", "GP", "W", "L", "OTL", "T", "Pts", "GF", "GA", "Diff", "PPG", "PP opportunities", "PK kills", "Times shorthanded", "PIM"]
+            : ["Équipe", "Division", "Saison", "Rang", "PJ", "V", "D", "DP", "N", "Pts", "BP", "BC", "Diff", "BAN", "Occasions AN", "DN réussis", "Occasions DN", "Pun (min)"],
+        [myTeamName(), leagueText(currentClass()?.name || ""), seasonLabel(shownSeason()?.name || ""), row?.rank || "", row?.pj ?? "", row?.v ?? "", row ? row.dr + row.df : "", row?.dp ?? "", row?.n ?? "", row?.pts ?? "", row?.bp ?? "", row?.bc ?? "", row?.diff ?? "",
             ts?.ppg ?? "", ts?.ppo ?? "", ts?.pk ?? "", ts?.pko ?? "", ts?.pim ?? ""]];
-    const matchs = [["Date", "Heure", "Partie", "Dom./Vis.", "Adversaire", "Pour", "Contre", "Résultat", "Note", "Surface"],
+    const matchs = [EN ? ["Date", "Time", "Game", "Home/Away", "Opponent", "For", "Against", "Result", "Note", "Surface"]
+            : ["Date", "Heure", "Partie", "Dom./Vis.", "Adversaire", "Pour", "Contre", "Résultat", "Note", "Surface"],
         ...state.games.slice().sort((a, b) => a.start - b.start).map(g => {
             const home = g.home.no === me, r = resultOf(g, me), fin = g.score && isFinal(g);
-            return [localDate(g.start), g.hasTime ? fmtTime.format(g.start) : "", g.no, home ? "Dom." : "Vis.", oppOf(g, me).name,
+            return [localDate(g.start), g.hasTime ? fmtTime.format(g.start) : "", g.no, home ? T("Dom.", "Home") : T("Vis.", "Away"), oppOf(g, me).name,
                 fin ? (home ? g.score.h : g.score.a) : "", fin ? (home ? g.score.a : g.score.h) : "", r ? RESULT_LABEL[r] : "",
-                [g.status === "FORFAIT" ? "Forfait" : "", g.shootout && fin ? "Fusillade" : "", isPlayed(g) && !g.status ? "Résultat non saisi" : ""].filter(Boolean).join(", "), surfaceLabel(g.surface)];
+                [g.status === "FORFAIT" ? T("Forfait", "Forfeit") : "", g.shootout && fin ? T("Fusillade", "Shootout") : "", isPlayed(g) && !g.status ? T("Résultat non saisi", "Result not entered") : ""].filter(Boolean).join(", "), surfaceLabel(g.surface)];
         })];
-    const joueurs = [["#", "Joueur", "PJ", "B", "A", "Pts", "Pun", "BAN", "BDN", "BG"],
+    const joueurs = [EN ? ["#", "Player", "GP", "G", "A", "Pts", "PIM", "PPG", "SHG", "GWG"] : ["#", "Joueur", "PJ", "B", "A", "Pts", "Pun", "BAN", "BDN", "BG"],
         ...(state.players || []).map(p => [p.num && p.num !== "0" ? int(p.num) : "", p.name, p.pj, p.b, p.a, p.pts, p.pun, p.ban, p.bdn, p.bg])];
-    const gardiens = [["Gardien", "PJ", "V", "D", "N", "BC", "Moy", "BL"],
+    const gardiens = [EN ? ["Goalie", "GP", "W", "L", "T", "GA", "GAA", "SO"] : ["Gardien", "PJ", "V", "D", "N", "BC", "Moy", "BL"],
         ...(state.goalies || []).map(g => [g.name, g.pj, g.v, g.d, g.n, g.bc, g.moy ?? "", g.bl])];
     let logo = null;
     try { const r = await fetch(DRAGONS_LOGO); if (r.ok) logo = new Uint8Array(await r.arrayBuffer()); } catch { /* file without the logo */ }
-    const stamp = `Fichier généré le ${new Intl.DateTimeFormat("fr-CA", { dateStyle: "long", timeStyle: "short" }).format(new Date())}`;
-    saveFile(buildXLSX([{ name: "Équipe", rows: equipe, head: 0, note: stamp }, { name: "Matchs", rows: matchs, head: 0 }, { name: "Joueurs", rows: joueurs, head: 0 }, { name: "Gardiens", rows: gardiens, head: 0 }], logo),
-        `saison-${slug(myTeamName())}-${slug(shownSeason()?.name || "")}.xlsx`);
+    const stamp = `${T("Fichier généré le", "File generated on")} ${new Intl.DateTimeFormat(LOC, { dateStyle: "long", timeStyle: "short" }).format(new Date())}`;
+    saveFile(buildXLSX([{ name: T("Équipe", "Team"), rows: equipe, head: 0, note: stamp }, { name: T("Matchs", "Games"), rows: matchs, head: 0 }, { name: T("Joueurs", "Players"), rows: joueurs, head: 0 }, { name: T("Gardiens", "Goalies"), rows: gardiens, head: 0 }], logo),
+        `${T("saison", "season")}-${slug(myTeamName())}-${slug(seasonLabel(shownSeason()?.name || ""))}.xlsx`);
 }
 
 // ---------- Lineups (5 contre 5: 3 attaquants + 2 défenseurs, plus le gardien) ----------
@@ -1408,9 +1453,13 @@ function closeLineup() {
     renderTeam();
 }
 
-const playerById = (id) => lu.roster.find(p => p.id === id) || { id, num: "", name: "Hors liste", pos: "" };
+const playerById = (id) => lu.roster.find(p => p.id === id) || { id, num: "", name: T("Hors liste", "Not on roster"), pos: "" };
+// Box labels: the stored keys stay French (AG, C, AD, DG, DD, Partant, Auxiliaire); only what is shown changes
+const POS_LABEL = EN ? { AG: "LW", C: "C", AD: "RW", DG: "LD", DD: "RD", Partant: "Starter", Auxiliaire: "Backup", L: "L", D: "D" } : {};
+const posLabel = (p) => POS_LABEL[p] || p;
+const tagLabel = (p) => EN ? ({ ATT: "F", DEF: "D", G: "G" }[p] || p) : p;
 const placedIds = () => new Set([...Object.values(lu.data.slots).filter(Boolean), ...lu.data.res]);
-const tagFor = (p) => p.pos ? `<span class="lu-tag lu-tag-${p.pos.toLowerCase()}">${p.pos}</span>` : "";
+const tagFor = (p) => p.pos ? `<span class="lu-tag lu-tag-${p.pos.toLowerCase()}">${tagLabel(p.pos)}</span>` : "";
 const pLabel = (p) => `${p.num && p.num !== "0" ? `<b>#${esc(p.num)}</b> ` : ""}${esc(p.name)}`;
 
 function renderLineup(loading = false) {
@@ -1419,10 +1468,10 @@ function renderLineup(loading = false) {
     if (lu.bench) { el.innerHTML = benchHTML(); return; }
     const opp = oppOf(g, state.teamNo);
     const head = `<div class="lu-head">
-        <button type="button" class="icon-btn" data-lu="close" aria-label="Fermer">✕</button>
-        <div><div class="lu-title">${isPlayed(g) && !lu.editing ? "Alignement utilisé" : "Alignement"}</div>
+        <button type="button" class="icon-btn" data-lu="close" aria-label="${T("Fermer", "Close")}">✕</button>
+        <div><div class="lu-title">${isPlayed(g) && !lu.editing ? T("Alignement utilisé", "Lineup used") : T("Alignement", "Lineup")}</div>
         <div class="lu-sub">${esc(fmtDayShort.format(g.start))}${g.hasTime ? ` · ${esc(fmtTime.format(g.start))}` : ""} · ${g.home.no === state.teamNo ? "vs" : "@"} ${esc(opp.name)}</div></div>
-        <button type="button" class="btn" data-lu="bench">Vue banc</button>
+        <button type="button" class="btn" data-lu="bench">${T("Vue banc", "Bench view")}</button>
     </div>`;
     if (loading) { el.innerHTML = head + `<div class="lu-body">${skeletons(3, true)}</div>`; return; }
 
@@ -1433,23 +1482,23 @@ function renderLineup(loading = false) {
             <span class="lu-pos">${label}</span><span class="lu-name">${p ? pLabel(p) : "—"}</span></button>`;
     };
     const lines = (prefix, n, pos, cls) => Array.from({ length: n }, (_, i) => `<div class="lu-line ${cls} c${pos.length}"><span class="lu-lab">${prefix}${i + 1}</span>
-        ${pos.map(p => box(`${prefix}${i + 1}-${p}`, p)).join("")}</div>`).join("");
-    const chips = (list, kind) => list.length ? list.map(id => `<span class="lu-chip">${pLabel(playerById(id))}</span>`).join("") : `<span class="hint">Personne</span>`;
+        ${pos.map(p => box(`${prefix}${i + 1}-${p}`, posLabel(p))).join("")}</div>`).join("");
+    const chips = (list, kind) => list.length ? list.map(id => `<span class="lu-chip">${pLabel(playerById(id))}</span>`).join("") : `<span class="hint">${T("Personne", "Nobody")}</span>`;
     const prev = LS.get(`lineups_${state.teamNo}`, []).filter(x => x.g !== lu.gameNo).sort((a, b) => b.ts - a.ts)[0];
 
     el.innerHTML = head + `<div class="lu-body">
-        ${!lu.roster.length ? `<div class="notice">L'alignement de l'équipe n'est pas disponible sur le site de la ligue.</div>` : ""}
-        <h4>Lignes d'attaque</h4>${lines("L", FWD_LINES, FWD_POS, "fwd")}
-        <h4>Paires défensives</h4>${lines("D", DEF_PAIRS, DEF_POS, "def")}
-        <h4>Gardiens</h4><div class="lu-line gk">${box("G-Partant", "Partant")}${box("G-Auxiliaire", "Auxiliaire")}</div>
-        <h4>Réserves</h4><button type="button" class="lu-group" data-slot="res"${ro ? " disabled" : ""}>${chips(lu.data.res)}</button>
-        <h4>Absents</h4><button type="button" class="lu-group abs" data-slot="abs"${ro ? " disabled" : ""}>${chips(lu.data.abs)}</button>
+        ${!lu.roster.length ? `<div class="notice">${T("L'alignement de l'équipe n'est pas disponible sur le site de la ligue.", "The team roster is not available on the league website.")}</div>` : ""}
+        <h4>${T("Lignes d'attaque", "Forward lines")}</h4>${lines("L", FWD_LINES, FWD_POS, "fwd")}
+        <h4>${T("Paires défensives", "Defence pairs")}</h4>${lines("D", DEF_PAIRS, DEF_POS, "def")}
+        <h4>${T("Gardiens", "Goalies")}</h4><div class="lu-line gk">${box("G-Partant", posLabel("Partant"))}${box("G-Auxiliaire", posLabel("Auxiliaire"))}</div>
+        <h4>${T("Réserves", "Spares")}</h4><button type="button" class="lu-group" data-slot="res"${ro ? " disabled" : ""}>${chips(lu.data.res)}</button>
+        <h4>${T("Absents", "Absent")}</h4><button type="button" class="lu-group abs" data-slot="abs"${ro ? " disabled" : ""}>${chips(lu.data.abs)}</button>
         <div class="lu-actions">
-            ${ro ? `<button type="button" class="btn" data-lu="edit">Modifier</button>`
-                : `${prev ? `<button type="button" class="btn ghost" data-lu="copy">Copier le dernier match</button>` : ""}
-                   <button type="button" class="btn ghost" data-lu="clear">Tout effacer</button>`}
+            ${ro ? `<button type="button" class="btn" data-lu="edit">${T("Modifier", "Edit")}</button>`
+                : `${prev ? `<button type="button" class="btn ghost" data-lu="copy">${T("Copier le dernier match", "Copy last game")}</button>` : ""}
+                   <button type="button" class="btn ghost" data-lu="clear">${T("Tout effacer", "Clear all")}</button>`}
         </div>
-        <p class="hint">Enregistré sur ce téléphone seulement. Une ligne ou une paire vide n'apparaît pas dans la vue banc.</p>
+        <p class="hint">${T("Enregistré sur ce téléphone seulement. Une ligne ou une paire vide n'apparaît pas dans la vue banc.", "Saved on this phone only. An empty line or pair is left out of the bench view.")}</p>
     </div>${lu.pick ? pickerHTML() : ""}`;
 }
 
@@ -1460,15 +1509,15 @@ function pickerHTML() {
     const placed = placedIds(), abs = new Set(lu.data.abs);
     const rank = (p) => current.includes(p.id) ? 0 : abs.has(p.id) ? 3 : placed.has(p.id) ? 2 : 1;
     const list = lu.roster.slice().sort((a, b) => rank(a) - rank(b) || int(a.num) - int(b.num));
-    const title = multi ? (key === "res" ? "Réserves" : "Absents") : key.replace("-", " · ");
+    const title = multi ? (key === "res" ? T("Réserves", "Spares") : T("Absents", "Absent")) : key.split("-").map(posLabel).join(" · ");
     return `<div class="lu-pick-back" data-lu="pick-close"></div>
-    <div class="lu-pick" role="dialog" aria-label="Choisir un joueur">
-        <div class="lu-pick-head"><b>${esc(title)}</b><button type="button" class="btn" data-lu="pick-close">${multi ? "OK" : "Fermer"}</button></div>
-        ${!multi && current.length ? `<button type="button" class="lu-opt remove" data-pid="">Vider la case</button>` : ""}
+    <div class="lu-pick" role="dialog" aria-label="${T("Choisir un joueur", "Choose a player")}">
+        <div class="lu-pick-head"><b>${esc(title)}</b><button type="button" class="btn" data-lu="pick-close">${multi ? "OK" : T("Fermer", "Close")}</button></div>
+        ${!multi && current.length ? `<button type="button" class="lu-opt remove" data-pid="">${T("Vider la case", "Empty this box")}</button>` : ""}
         ${list.map(p => {
             const r = rank(p);
             return `<button type="button" class="lu-opt${r === 0 ? " current" : r >= 2 ? " placed" : ""}" data-pid="${esc(p.id)}">
-                <span>${pLabel(p)}</span>${tagFor(p)}${r === 0 ? `<span class="lu-mark">✓</span>` : r === 3 ? `<span class="lu-mark">absent</span>` : r === 2 ? `<span class="lu-mark">placé</span>` : ""}</button>`;
+                <span>${pLabel(p)}</span>${tagFor(p)}${r === 0 ? `<span class="lu-mark">✓</span>` : r === 3 ? `<span class="lu-mark">${T("absent", "absent")}</span>` : r === 2 ? `<span class="lu-mark">${T("placé", "placed")}</span>` : ""}</button>`;
         }).join("")}
     </div>`;
 }
@@ -1505,27 +1554,27 @@ function benchHTML() {
         const lined = rows.length > 1;
         return `<section class="bv-group bv-${kind}"><h3>${title}</h3>
             <div class="bv-row bv-cols c${cols.length}${lined ? "" : " solo"}">${lined ? "<span></span>" : ""}${cols.map(c => `<span>${c}</span>`).join("")}</div>
-            ${used.map(r => `<div class="bv-row c${cols.length}${lined ? "" : " solo"}">${lined ? `<span class="bv-line">${r.label}</span>` : ""}${r.keys.map(k => cell(d.slots[k])).join("")}</div>`).join("")}
+            ${used.map(r => `<div class="bv-row c${cols.length}${lined ? "" : " solo"}">${lined ? `<span class="bv-line">${esc(r.label)}</span>` : ""}${r.keys.map(k => cell(d.slots[k])).join("")}</div>`).join("")}
         </section>`;
     };
     const rowsOf = (prefix, n, pos) => Array.from({ length: n }, (_, i) => ({ label: `${prefix}${i + 1}`, keys: pos.map(p => `${prefix}${i + 1}-${p}`) }));
-    const fwd = group("Attaque", "a", rowsOf("L", FWD_LINES, FWD_POS), ["Ailier gauche", "Centre", "Ailier droit"]);
-    const def = group("Défense", "d", rowsOf("D", DEF_PAIRS, DEF_POS), ["Défenseur gauche", "Défenseur droit"]);
-    const gk = group("Gardiens", "g", [{ label: "G", keys: ["G-Partant", "G-Auxiliaire"] }], ["Partant", "Auxiliaire"]);
-    const res = d.res.length ? `<section class="bv-group"><h3>Réserves</h3><div class="bv-row extras">${d.res.map(cell).join("")}</div></section>` : "";
+    const fwd = group(T("Attaque", "Forwards"), "a", rowsOf("L", FWD_LINES, FWD_POS), EN ? ["Left wing", "Centre", "Right wing"] : ["Ailier gauche", "Centre", "Ailier droit"]);
+    const def = group(T("Défense", "Defence"), "d", rowsOf("D", DEF_PAIRS, DEF_POS), EN ? ["Left D", "Right D"] : ["Défenseur gauche", "Défenseur droit"]);
+    const gk = group(T("Gardiens", "Goalies"), "g", [{ label: "G", keys: ["G-Partant", "G-Auxiliaire"] }], [posLabel("Partant"), posLabel("Auxiliaire")]);
+    const res = d.res.length ? `<section class="bv-group"><h3>${T("Réserves", "Spares")}</h3><div class="bv-row extras">${d.res.map(cell).join("")}</div></section>` : "";
     const when = `${cap(fmtDayLong.format(g.start))}${g.hasTime ? ` · ${fmtTime.format(g.start)}` : ""}`;
     return `<div class="bench-view">
         <header class="bv-head">
             <div><strong>${esc(myTeamName())}</strong><span>${home ? "vs" : "@"} ${esc(opp.name)} · ${esc(when)}</span></div>
-            <button type="button" class="bv-close" data-lu="bench-off" aria-label="Fermer la vue banc">
+            <button type="button" class="bv-close" data-lu="bench-off" aria-label="${T("Fermer la vue banc", "Close bench view")}">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
             </button>
         </header>
         <div class="bv-body">
-            <div class="bv-groups">${fwd + def + gk + res || `<div class="bv-empty">Aucun joueur placé.</div>`}</div>
+            <div class="bv-groups">${fwd + def + gk + res || `<div class="bv-empty">${T("Aucun joueur placé.", "No players placed.")}</div>`}</div>
             <aside class="bv-info" aria-hidden="true">
                 <div class="bv-info-team">${esc(myTeamName())}</div>
-                <div class="bv-info-vs">${home ? "reçoit" : "visite"}</div>
+                <div class="bv-info-vs">${home ? T("reçoit", "hosts") : T("visite", "visits")}</div>
                 <div class="bv-info-team opp">${esc(opp.name)}</div>
                 <div class="bv-info-when">${esc(cap(fmtDayLong.format(g.start)))}</div>
                 ${g.hasTime ? `<div class="bv-info-time">${esc(fmtTime.format(g.start))}</div>` : ""}
@@ -1537,6 +1586,22 @@ function benchHTML() {
 
 // ---------- Events ----------
 $("#refreshBtn").addEventListener("click", refreshAll);
+
+// FR | EN switch: remembered on this device, French unless English is picked
+(function setupLanguage() {
+    document.querySelectorAll("#langSwitch [data-lang]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === LANG)));
+    $("#refreshBtn").setAttribute("aria-label", T("Rafraîchir", "Refresh")); $("#refreshBtn").title = T("Rafraîchir", "Refresh");
+    $("#logoImg")?.setAttribute("alt", T("Logo Dragons", "Dragons logo"));
+    document.querySelector("[data-close-sheet]")?.setAttribute("aria-label", T("Fermer", "Close"));
+    $("#langSwitch")?.addEventListener("click", (e) => {
+        const want = e.target.closest("[data-lang]")?.dataset.lang;
+        if (!want || want === LANG) return;
+        try { localStorage.setItem(LS_PREFIX + "lang", JSON.stringify(want)); } catch { /* blocked: the address keeps it */ }
+        const url = new URL(location.href);
+        if (want === "en") url.searchParams.set("lang", "en"); else url.searchParams.delete("lang");
+        location.replace(url);
+    });
+})();
 
 $("#picker").addEventListener("change", (e) => {
     const id = e.target.id, v = e.target.value;
@@ -1630,7 +1695,7 @@ document.addEventListener("keydown", (e) => {
         await loadSeasons();
     } catch (e) {
         console.warn(e);
-        state.error = "Impossible de lire les données de la ligue.";
+        state.error = T("Impossible de lire les données de la ligue.", "Could not read the league data.");
         progress(false); renderAll();
         return;
     }
