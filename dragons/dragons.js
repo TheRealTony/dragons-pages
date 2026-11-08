@@ -555,6 +555,7 @@ function gameCard(g, myNo = state.teamNo, withLineup = true) {
     if (result) badges.push(`<span class="badge ${result}">${RESULT_LABEL[result]}</span>`);
     if (g.status === "FORFAIT") badges.push(`<span class="badge">Forfait</span>`);
     if (g.shootout && isFinal(g)) badges.push(`<span class="badge">Fusillade</span>`);
+    if (isPlayed(g) && !g.status) badges.push(`<span class="badge" title="La ligue n'a pas encore inscrit le pointage">Résultat non saisi</span>`);
     if (g.no) badges.push(`<span class="badge">#${esc(g.no)}</span>`);
 
     const upcoming = !sc && !isPlayed(g);
@@ -811,11 +812,10 @@ function statsView() {
     if (state.goalies?.length) {
         goalies = `<div class="panel"><div class="panel-title">Gardiens</div><div class="table-scroll"><table class="standings stats">
             <thead><tr><th class="c-team">Gardien</th><th title="Parties jouées">PJ</th><th title="Victoires">V</th><th title="Défaites">D</th><th title="Nulles">N</th>
-                <th title="Tirs reçus">TR</th><th title="Buts contre">BC</th><th title="Efficacité">Eff</th><th title="Moyenne de buts alloués par partie">Moy</th><th title="Blanchissages">BL</th></tr></thead>
+                <th title="Buts contre">BC</th><th title="Moyenne de buts alloués par partie">Moy</th><th title="Blanchissages">BL</th></tr></thead>
             <tbody>${state.goalies.map(g => `<tr>
                 <td class="c-team" title="${esc(g.name)}"><span class="cell-id">${avatar(g.img, g.name)}${playerLink(g)}</span></td>
-                <td>${g.pj}</td><td>${g.v}</td><td>${g.d}</td><td>${g.n}</td><td>${g.tr}</td><td>${g.bc}</td>
-                <td>${g.eff == null ? "–" : dec(g.eff, 3).replace(/^0/, "")}</td><td>${dec(g.moy)}</td><td>${g.bl}</td>
+                <td>${g.pj}</td><td>${g.v}</td><td>${g.d}</td><td>${g.n}</td><td>${g.bc}</td><td>${dec(g.moy)}</td><td>${g.bl}</td>
             </tr>`).join("")}</tbody>
         </table></div></div>`;
     }
@@ -1069,6 +1069,20 @@ function parseSummary(board, stats, goalsAns, pensAns) {
         s[k].stats = r ? { shots: r.GameExtraShots?.[0] ?? "", pim: int(r.GameExtraPun?.[0]), ppg: pp ? int(pp[1]) : null, ppo: pp ? int(pp[2]) : null } : null;
     });
     if (!s.periods.length) ["1", "2", "3"].forEach((x, i) => addPeriod(x, i));
+    // League rule: a tie goes to a shootout. Shooters are usually not entered and the shootout goal is not on the
+    // scoresheet, only in the final score: listed goals tied, final score one apart = decided in a shootout.
+    const listed = (home) => s.goals.filter(x => x.home === home).length;
+    const done = s.status === "END" || (s.start && s.start.getTime() < LONG_AGO() && s.status !== "FORFAIT" && (s.away.score || s.home.score));
+    if (done && s.status !== "FORFAIT" && listed(true) === listed(false) && Math.abs(s.home.score - s.away.score) === 1
+        && listed(true) + listed(false) === s.home.score + s.away.score - 1) s.shootout = true;
+    s.soWinner = s.shootout ? (s.home.score > s.away.score ? "home" : "away") : "";
+    // Game-winning goal: the winner's goal that put them ahead for good (their goal n° loser's score + 1)
+    const order = (x) => s.periods.findIndex(p => p.short === x.p) * 1e5 + secs(x.t);
+    if (!s.shootout && s.home.score !== s.away.score) {
+        const homeWon = s.home.score > s.away.score, loser = homeWon ? s.away.score : s.home.score;
+        const theirs = s.goals.filter(x => x.home === homeWon).sort((a, b) => order(a) - order(b));
+        if (theirs.length === (homeWon ? s.home.score : s.away.score)) s.gwg = theirs[loser] || null;
+    }
     return s;
 }
 
@@ -1098,7 +1112,7 @@ async function openSummary(gameNo) {
 
     // Score by period (+ shootout)
     const pcols = s.periods.map(p => p.short);
-    const soWin = s.shootout ? (H.score > A.score ? "home" : "away") : "";
+    const soWin = s.soWinner, soTeam = soWin === "home" ? H : A;
     const line = (t, home) => `<tr${t.no === state.teamNo ? ` class="me"` : ""}><td class="c-team"><span class="cell-id">${teamMark(t, "sm")}<span class="nm">${esc(t.name)}</span></span></td>
         ${pcols.map(p => `<td>${s.goals.filter(x => x.p === p && x.home === home).length}</td>`).join("")}
         ${s.shootout ? `<td>${soWin === (home ? "home" : "away") ? 1 : 0}</td>` : ""}
@@ -1112,9 +1126,17 @@ async function openSummary(gameNo) {
     const val = (v) => v ?? "–";
     const pk = (t, o) => o.stats?.ppo != null && o.stats?.ppg != null ? { k: o.stats.ppo - o.stats.ppg, n: o.stats.ppo } : null;
     const pkA = pk(A, H), pkH = pk(H, A);
-    // Scoring depth: number of different players who scored
-    const depth = (home) => ({ scorers: new Set(s.goals.filter(x => x.home === home && x.scorer).map(x => x.scorer.id || norm(x.scorer.name))).size });
-    const dA = depth(false), dH = depth(true);
+    const pname = (p) => p ? `${p.num && p.num !== "0" ? `#${esc(p.num)} ` : ""}${p.id ? `<button type="button" class="link-btn" data-player="${esc(p.id)}">${esc(p.name)}</button>` : esc(p.name)}` : "";
+    // Game-winning goal: team logo, number and name of the scorer
+    const gwgBox = () => {
+        let body;
+        if (s.shootout) body = `${teamMark(soTeam, "sm")}<span class="gwg-who"><b>Fusillade</b><small>Tireur non inscrit</small></span>`;
+        else if (s.gwg) {
+            const t = sideOf(s.gwg.home), p = s.gwg.scorer;
+            body = `${teamMark(t, "sm")}<span class="gwg-who"><b>${p ? pname(p) : esc(t.name)}</b><small>${esc(s.periods.find(x => x.short === s.gwg.p)?.long || s.gwg.p)} · ${esc(s.gwg.t)}</small></span>`;
+        } else body = `<span class="gwg-who"><b>${A.score === H.score && (s.status === "END") ? "Match nul" : "–"}</b></span>`;
+        return `<div class="gs-box"><div class="gs-label">But gagnant</div><div class="gwg">${body}</div></div>`;
+    };
     const nPen = (home) => s.pens.filter(x => x.home === home).length;
     const box = (label, a, h, aSub = "", hSub = "") => `<div class="gs-box">
         <div class="gs-label">${label}</div>
@@ -1127,11 +1149,10 @@ async function openSummary(gameNo) {
         ${box("Avantage num.", `${val(A.stats.ppg)}/${val(A.stats.ppo)}`, `${val(H.stats.ppg)}/${val(H.stats.ppo)}`, pct(A.stats.ppg, A.stats.ppo), pct(H.stats.ppg, H.stats.ppo))}
         ${box("Désavantage num.", pkA ? `${pkA.k}/${pkA.n}` : "–", pkH ? `${pkH.k}/${pkH.n}` : "–", pkA ? pct(pkA.k, pkA.n) : "", pkH ? pct(pkH.k, pkH.n) : "")}
         ${box("Minutes de punition", A.stats.pim, H.stats.pim, `${nPen(false)} pun.`, `${nPen(true)} pun.`)}
-        ${box("Buteurs différents", dA.scorers, dH.scorers)}
+        ${gwgBox()}
     </div>` : "";
 
     // Goals and penalties by period, in game-clock order, with the player's photo
-    const pname = (p) => p ? `${p.num && p.num !== "0" ? `#${esc(p.num)} ` : ""}${p.id ? `<button type="button" class="link-btn" data-player="${esc(p.id)}">${esc(p.name)}</button>` : esc(p.name)}` : "";
     const byPeriod = (list, render) => {
         if (!list.length) return `<div class="empty">Aucun.</div>`;
         return s.periods.filter(p => list.some(x => x.p === p.short)).map(p =>
@@ -1154,7 +1175,10 @@ async function openSummary(gameNo) {
             <span class="sum-run">${x.min != null ? `${String(x.min).replace(".", ",")} min` : ""}</span>
         </div>`;
     };
-    const so = s.so.length ? `<h4>Fusillade</h4><div class="sum-list">${s.so.sort((a, b) => a.n - b.n).map(x => {
+    const so = s.shootout && !s.so.length ? `<h4>Fusillade</h4><div class="sum-list"><div class="sum-item${soTeam.no === state.teamNo ? " mine" : ""}"><span class="d">TB</span>${teamMark(soTeam, "sm")}
+            <span class="o"><span class="who">${esc(soTeam.name)} gagne en fusillade</span><span class="sum-as">Tireurs non inscrits à la feuille de match</span></span>
+            <span class="sum-run">${A.score}-${H.score}</span></div></div>`
+        : s.so.length ? `<h4>Fusillade</h4><div class="sum-list">${s.so.sort((a, b) => a.n - b.n).map(x => {
         const t = norm(x.abbr) === norm(H.abbr) ? H : A;
         return `<div class="sum-item${t.no === state.teamNo ? " mine" : ""}"><span class="d">${x.n}</span>${teamMark(t, "sm")}<span class="o"><span class="who">${pname(x)}</span></span>
             <span class="sum-run ${x.scored ? "yes" : "no"}">${x.scored ? "✓ But" : "✗ Raté"}</span></div>`;
@@ -1206,8 +1230,8 @@ async function openPlayer(id) {
     }
     if (gk.length) {
         html += `<h4>Gardien</h4>
-        <div class="table-scroll"><table class="standings mini career"><thead><tr><th class="c-team">Saison · équipe</th><th>PJ</th><th>V</th><th>D</th><th>N</th><th>BC</th><th>Eff</th><th>Moy</th></tr></thead><tbody>
-            ${gk.map(r => `<tr class="${r.teamNo === state.teamNo ? "me" : ""}">${seasonCell(r)}<td>${r.pj}</td><td>${r.v}</td><td>${r.d}</td><td>${r.n}</td><td>${r.bc}</td><td>${r.eff == null ? "–" : dec(r.eff, 3).replace(/^0/, "")}</td><td>${dec(r.moy)}</td></tr>`).join("")}
+        <div class="table-scroll"><table class="standings mini career"><thead><tr><th class="c-team">Saison · équipe</th><th>PJ</th><th>V</th><th>D</th><th>N</th><th>BC</th><th>Moy</th></tr></thead><tbody>
+            ${gk.map(r => `<tr class="${r.teamNo === state.teamNo ? "me" : ""}">${seasonCell(r)}<td>${r.pj}</td><td>${r.v}</td><td>${r.d}</td><td>${r.n}</td><td>${r.bc}</td><td>${dec(r.moy)}</td></tr>`).join("")}
         </tbody></table></div>`;
     }
     if (!sk.length && !gk.length) html += `<div class="hint">Aucune statistique enregistrée.</div>`;
@@ -1253,7 +1277,7 @@ function zipStore(files) {          // files: [{ name, data: string }] → store
     const enc = new TextEncoder(), parts = [], central = [];
     let offset = 0;
     files.forEach(f => {
-        const name = enc.encode(f.name), data = enc.encode(f.data), crc = crc32(data);
+        const name = enc.encode(f.name), data = typeof f.data === "string" ? enc.encode(f.data) : f.data, crc = crc32(data);
         const head = new DataView(new ArrayBuffer(30));
         head.setUint32(0, 0x04034b50, true); head.setUint16(4, 20, true); head.setUint16(6, 0x0800, true);
         head.setUint32(14, crc, true); head.setUint32(18, data.length, true); head.setUint32(22, data.length, true); head.setUint16(26, name.length, true);
@@ -1272,29 +1296,48 @@ function zipStore(files) {          // files: [{ name, data: string }] → store
     return new Blob([...parts, ...central, end], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
 const xml = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-function sheetXML(rows) {
-    const colName = (i) => { let s = ""; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
-    const body = rows.map((r, ri) => `<row r="${ri + 1}">${r.map((v, ci) => {
-        const ref = `${colName(ci)}${ri + 1}`, style = ri === 0 ? ` s="1"` : "";
-        return typeof v === "number" && Number.isFinite(v) ? `<c r="${ref}"${style}><v>${v}</v></c>`
-            : `<c r="${ref}" t="inlineStr"${style}><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
-    }).join("")}</row>`).join("");
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetData>${body}</sheetData></worksheet>`;
+// Each sheet: the Dragons logo in the top-left corner (rows 1-4), then its table; every cell centred.
+const LOGO_ROWS = 5;                 // rows left free above the table (logo is 80 px ≈ 4 rows)
+const colName = (i) => { let s = ""; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+function sheetXML({ rows, head, note }, withLogo) {
+    const cell = (ref, v, style) => typeof v === "number" && Number.isFinite(v) ? `<c r="${ref}" s="${style}"><v>${v}</v></c>`
+        : `<c r="${ref}" t="inlineStr" s="${style}"><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
+    const out = withLogo ? [1, 2, 3, 4].map(r => `<row r="${r}" ht="16" customHeight="1"/>`) : [];   // 4 × 16 pt ≈ 85 px for the logo
+    if (note) out.push(`<row r="${LOGO_ROWS}">${cell(`A${LOGO_ROWS}`, note, 3)}</row>`);
+    const first = LOGO_ROWS + (note ? 2 : 1);
+    rows.forEach((r, ri) => out.push(`<row r="${first + ri}">${r.map((v, ci) => cell(`${colName(ci)}${first + ri}`, v, ri === head ? 1 : 2)).join("")}</row>`));
+    const nCols = Math.max(...rows.map(r => r.length));
+    const widths = Array.from({ length: nCols }, (_, ci) => Math.min(42, Math.max(6, ...rows.map(r => String(r[ci] ?? "").length + 3))));
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
+        + `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}</cols>`
+        + `<sheetData>${out.join("")}</sheetData>${withLogo ? `<drawing r:id="rId1"/>` : ""}</worksheet>`;
 }
-function buildXLSX(sheets) {         // sheets: [{ name, rows }]
+const LOGO_PX = 76, EMU = 9525;
+const drawingXML = () => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><xdr:oneCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="${LOGO_PX * EMU}" cy="${LOGO_PX * EMU}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="2" name="Logo Dragons"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${LOGO_PX * EMU}" cy="${LOGO_PX * EMU}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor></xdr:wsDr>`;
+const REL = (id, type, target) => `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"/>`;
+const RELS = (inner) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${inner}</Relationships>`;
+function buildXLSX(sheets, logo) {         // sheets: [{ name, rows, head, note }], logo: Uint8Array (JPEG) or null
     const files = [
-        { name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>` },
-        { name: "_rels/.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+        { name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="jpeg" ContentType="image/jpeg"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>${logo ? `<Override PartName="/xl/drawings/drawing${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>` : ""}`).join("")}</Types>` },
+        { name: "_rels/.rels", data: RELS(REL("rId1", "officeDocument", "xl/workbook.xml")) },
         { name: "xl/workbook.xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xml(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>` },
-        { name: "xl/_rels/workbook.xml.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
-        { name: "xl/styles.xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf/><xf fontId="1" applyFont="1"/></cellXfs></styleSheet>` },
-        ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXML(s.rows) })),
+        { name: "xl/_rels/workbook.xml.rels", data: RELS(sheets.map((s, i) => REL(`rId${i + 1}`, "worksheet", `worksheets/sheet${i + 1}.xml`)).join("") + REL(`rId${sheets.length + 1}`, "styles", "styles.xml")) },
+        // Styles: 0 default, 1 header (bold, centred), 2 centred, 3 timestamp (italic grey, left)
+        { name: "xl/styles.xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><i/><sz val="10"/><color rgb="FF687082"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="4"><xf/><xf fontId="1" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf fontId="2" applyFont="1"/></cellXfs></styleSheet>` },
+        ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXML(s, !!logo) })),
     ];
+    if (logo) {
+        files.push({ name: "xl/media/image1.jpeg", data: logo });
+        sheets.forEach((s, i) => files.push(
+            { name: `xl/worksheets/_rels/sheet${i + 1}.xml.rels`, data: RELS(REL("rId1", "drawing", `../drawings/drawing${i + 1}.xml`)) },
+            { name: `xl/drawings/drawing${i + 1}.xml`, data: drawingXML() },
+            { name: `xl/drawings/_rels/drawing${i + 1}.xml.rels`, data: RELS(REL("rId1", "image", "../media/image1.jpeg")) }));
+    }
     return zipStore(files);
 }
 // Local calendar date (toISOString gives the UTC date, a day late for evening games)
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-function downloadXLSX() {
+async function downloadXLSX() {
     const row = standRow(state.teamNo), me = state.teamNo;
     const ts = seasonTeamStats();
     const equipe = [["Équipe", "Division", "Saison", "Rang", "PJ", "V", "D", "DP", "N", "Pts", "BP", "BC", "Diff", "BAN", "Occasions AN", "DN réussis", "Occasions DN", "Pun (min)"],
@@ -1305,13 +1348,16 @@ function downloadXLSX() {
             const home = g.home.no === me, r = resultOf(g, me), fin = g.score && isFinal(g);
             return [localDate(g.start), g.hasTime ? fmtTime.format(g.start) : "", g.no, home ? "Dom." : "Vis.", oppOf(g, me).name,
                 fin ? (home ? g.score.h : g.score.a) : "", fin ? (home ? g.score.a : g.score.h) : "", r ? RESULT_LABEL[r] : "",
-                [g.status === "FORFAIT" ? "Forfait" : "", g.shootout && fin ? "Fusillade" : ""].filter(Boolean).join(", "), surfaceLabel(g.surface)];
+                [g.status === "FORFAIT" ? "Forfait" : "", g.shootout && fin ? "Fusillade" : "", isPlayed(g) && !g.status ? "Résultat non saisi" : ""].filter(Boolean).join(", "), surfaceLabel(g.surface)];
         })];
     const joueurs = [["#", "Joueur", "PJ", "B", "A", "Pts", "Pun", "BAN", "BDN", "BG"],
         ...(state.players || []).map(p => [p.num && p.num !== "0" ? int(p.num) : "", p.name, p.pj, p.b, p.a, p.pts, p.pun, p.ban, p.bdn, p.bg])];
-    const gardiens = [["Gardien", "PJ", "V", "D", "N", "TR", "BC", "Eff", "Moy", "BL"],
-        ...(state.goalies || []).map(g => [g.name, g.pj, g.v, g.d, g.n, g.tr, g.bc, g.eff ?? "", g.moy ?? "", g.bl])];
-    saveFile(buildXLSX([{ name: "Équipe", rows: equipe }, { name: "Matchs", rows: matchs }, { name: "Joueurs", rows: joueurs }, { name: "Gardiens", rows: gardiens }]),
+    const gardiens = [["Gardien", "PJ", "V", "D", "N", "BC", "Moy", "BL"],
+        ...(state.goalies || []).map(g => [g.name, g.pj, g.v, g.d, g.n, g.bc, g.moy ?? "", g.bl])];
+    let logo = null;
+    try { const r = await fetch(DRAGONS_LOGO); if (r.ok) logo = new Uint8Array(await r.arrayBuffer()); } catch { /* file without the logo */ }
+    const stamp = `Fichier généré le ${new Intl.DateTimeFormat("fr-CA", { dateStyle: "long", timeStyle: "short" }).format(new Date())}`;
+    saveFile(buildXLSX([{ name: "Équipe", rows: equipe, head: 0, note: stamp }, { name: "Matchs", rows: matchs, head: 0 }, { name: "Joueurs", rows: joueurs, head: 0 }, { name: "Gardiens", rows: gardiens, head: 0 }], logo),
         `saison-${slug(myTeamName())}-${slug(shownSeason()?.name || "")}.xlsx`);
 }
 
