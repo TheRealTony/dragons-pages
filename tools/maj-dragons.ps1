@@ -71,7 +71,7 @@ foreach ($min in "1", "0") {
 # The answers are already JSON: they are stored as received
 $parts = foreach ($k in $answers.Keys) { '"' + $k + '":' + $answers[$k] }
 $json = '{"fetchedAt":"' + (Get-Date).ToString("o") + '","seasonNo":"' + $s + '","answers":{' + ($parts -join ",") + '}}'
-$json = $json.Replace("<", "<")     # keeps the data from closing its <script> block
+$json = $json.Replace('<', '\u003c')     # keeps the data from closing its <script> block (JSON.parse turns \u003c back into <)
 
 $block = "<!--SNAPSHOT-START-->`n<script id=`"snapshot`" type=`"application/json`">" + $json + "</script>`n<!--SNAPSHOT-END-->"
 $utf8 = New-Object System.Text.UTF8Encoding($false)
